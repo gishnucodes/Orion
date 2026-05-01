@@ -1,0 +1,385 @@
+# Portal Scanner Configuration
+# Tailored for: Gishnu Madhu
+# Focus: Applied AI Engineer / AI Platform Engineer / Backend AI Systems / Agentic & Voice AI / ML Infrastructure
+
+title_filter:
+  positive:
+    # Core AI engineering
+    - "AI Engineer"
+    - "Applied AI Engineer"
+    - "ML Engineer"
+    - "Machine Learning Engineer"
+    - "LLM Engineer"
+    - "Generative AI Engineer"
+    - "GenAI Engineer"
+    - "Agent Engineer"
+    - "Agentic Engineer"
+    - "AI Platform Engineer"
+    - "ML Platform Engineer"
+    - "MLOps Engineer"
+    - "LLMOps Engineer"
+    - "AI Infrastructure Engineer"
+    - "AI Systems Engineer"
+
+    # Backend / distributed / infra fit
+    - "Backend Engineer"
+    - "Software Engineer"
+    - "Platform Engineer"
+    - "Distributed Systems Engineer"
+    - "Infrastructure Engineer"
+
+    # Workflow / orchestration / deployment
+    - "Forward Deployed Engineer"
+    - "Deployment Engineer"
+    - "Solutions Engineer"
+    - "Solutions Architect"
+
+    # Voice / conversational / search / retrieval
+    - "Voice AI"
+    - "Speech AI"
+    - "Conversational AI"
+    - "RAG Engineer"
+    - "Research Engineer"
+
+  negative:
+    # Low-fit or distracting roles
+    - "Junior"
+    - "Intern"
+    - "Product Manager"
+    - "Product Owner"
+    - "Designer"
+    - "Sales"
+    - "Account Executive"
+    - "Customer Success"
+    - "Recruiter"
+    - "Marketing"
+    - "DevRel"
+    - "Developer Advocate"
+    - "QA"
+    - "SDET"
+    - ".NET"
+    - "PHP"
+    - "Ruby"
+    - "iOS"
+    - "Android"
+    - "Embedded"
+    - "Firmware"
+    - "FPGA"
+    - "ASIC"
+    - "Blockchain"
+    - "Web3"
+    - "Crypto"
+    - "Salesforce Admin"
+    - "SAP"
+    - "Oracle EBS"
+    - "Mainframe"
+    - "COBOL"
+
+  seniority_boost:
+    - "Senior"
+    - "Staff"
+    - "Principal"
+    - "Lead"
+
+search_queries:
+  # Greenhouse
+  - name: Greenhouse — Applied AI / LLM
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "Applied AI Engineer" OR "LLM Engineer" OR "Generative AI Engineer" remote'
+    enabled: true
+
+  - name: Greenhouse — ML Platform / MLOps
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "ML Platform Engineer" OR "MLOps Engineer" OR "LLMOps Engineer" remote'
+    enabled: true
+
+  - name: Greenhouse — Backend AI / Systems
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "Backend Engineer" OR "Platform Engineer" "AI" OR "LLM" remote'
+    enabled: true
+
+  - name: Greenhouse — Agentic / RAG / Search
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "Agentic" OR "AI Agent" OR "RAG" OR "Research Engineer" remote'
+    enabled: true
+
+  - name: Greenhouse — Voice AI / Conversational AI
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "Voice AI" OR "Speech" OR "Conversational AI" "Engineer" remote'
+    enabled: true
+
+  - name: Greenhouse — Forward Deployed / Solutions
+    query: 'site:boards.greenhouse.io OR site:job-boards.greenhouse.io "Forward Deployed Engineer" OR "Deployment Engineer" OR "Solutions Engineer" AI remote'
+    enabled: true
+
+  # Ashby
+  - name: Ashby — Applied AI / LLM
+    query: 'site:jobs.ashbyhq.com "Applied AI Engineer" OR "LLM Engineer" OR "AI Engineer" remote'
+    enabled: true
+
+  - name: Ashby — Platform / Backend AI
+    query: 'site:jobs.ashbyhq.com "Platform Engineer" OR "Backend Engineer" "AI" OR "LLM" remote'
+    enabled: true
+
+  - name: Ashby — Agentic / RAG
+    query: 'site:jobs.ashbyhq.com "Agentic" OR "AI Agent" OR "RAG Engineer" OR "Research Engineer" remote'
+    enabled: true
+
+  - name: Ashby — Voice AI / Speech
+    query: 'site:jobs.ashbyhq.com "Voice AI" OR "Speech" OR "Conversational AI" "Engineer" remote'
+    enabled: true
+
+  - name: Ashby — FDE / Deployment / Solutions
+    query: 'site:jobs.ashbyhq.com "Forward Deployed Engineer" OR "Deployment Engineer" OR "Solutions Engineer" AI remote'
+    enabled: true
+
+  # Lever
+  - name: Lever — Applied AI / LLM
+    query: 'site:jobs.lever.co "Applied AI Engineer" OR "LLM Engineer" OR "AI Engineer" remote'
+    enabled: true
+
+  - name: Lever — Platform / Backend AI
+    query: 'site:jobs.lever.co "Platform Engineer" OR "Backend Engineer" "AI" OR "ML" remote'
+    enabled: true
+
+  - name: Lever — Voice / Agentic / FDE
+    query: 'site:jobs.lever.co "Voice AI" OR "Conversational AI" OR "Forward Deployed Engineer" OR "AI Agent" remote'
+    enabled: true
+
+  # YC / startup ecosystem
+  - name: YC Jobs — Applied AI / Founding
+    query: 'site:workatastartup.com "Applied AI Engineer" OR "AI Engineer" OR "Founding Engineer" remote'
+    enabled: true
+
+  - name: YC Jobs — Agentic / Infrastructure
+    query: 'site:workatastartup.com "Agentic" OR "AI Agent" OR "Platform Engineer" OR "Infrastructure Engineer" remote'
+    enabled: 
+  
+  - name: a16z Jobs
+    careers_url: https://jobs.a16z.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.a16z.com "AI Engineer" OR "Applied AI" OR "ML Engineer" OR "Platform Engineer" OR "Founding Engineer"'
+    notes: "Andreessen Horowitz portfolio jobs — strong signal for AI startups, infra, and founding roles."
+    enabled: true
+
+  - name: Sequoia Jobs
+    careers_url: https://jobs.sequoiacap.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.sequoiacap.com "AI Engineer" OR "Applied AI" OR "ML Engineer" OR "Platform Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: Lightspeed Jobs
+    careers_url: https://jobs.lsvp.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.lsvp.com "AI Engineer" OR "LLM" OR "Agent" OR "Platform Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: General Catalyst Jobs
+    careers_url: https://jobs.generalcatalyst.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.generalcatalyst.com "AI Engineer" OR "Applied AI" OR "ML Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: Index Ventures Jobs
+    careers_url: https://jobs.indexventures.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.indexventures.com "AI Engineer" OR "Applied AI" OR "ML Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: Bessemer Jobs
+    careers_url: https://jobs.bvp.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.bvp.com "AI Engineer" OR "LLM" OR "Platform Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: Accel Jobs
+    careers_url: https://jobs.accel.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.accel.com "AI Engineer" OR "Applied AI" OR "Platform Engineer" OR "Founding Engineer" remote'
+    enabled: true
+  
+  - name: Radical Ventures Jobs
+    careers_url: https://jobs.radical.vc/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.radical.vc "AI Engineer" OR "ML Engineer" OR "Research Engineer" remote'
+    enabled: true
+  
+  - name: Khosla Ventures Jobs
+    careers_url: https://jobs.khoslaventures.com/jobs
+    scan_method: websearch
+    scan_query: 'site:jobs.khoslaventures.com "AI Engineer" OR "ML Engineer" OR "Applied AI" remote'
+    enabled: true
+    
+
+tracked_companies:
+
+  - name: a16z
+    careers_url: https://jobs.a16z.com/jobs
+    enabled: true
+  
+  - name: Sequoia
+    careers_url: https://jobs.sequoiacap.com/jobs
+    enabled: true
+  
+  - name: Lightspeed
+    careers_url: https://jobs.lsvp.com/jobs
+    enabled: true 
+  
+  - name: General Catalyst
+    careers_url: https://jobs.generalcatalyst.com/jobs
+    enabled: true
+  
+  - name: Index Ventures
+    careers_url: https://jobs.indexventures.com/jobs
+    enabled: true
+  
+  - name: Bessemer
+    careers_url: https://jobs.bvp.com/jobs
+    enabled: true
+  
+  - name: Accel
+    careers_url: https://jobs.accel.com/jobs
+    enabled: true
+  
+  - name: Radical Ventures
+    careers_url: https://jobs.radical.vc/jobs
+    enabled: true
+  
+  - name: Khosla Ventures
+    careers_url: https://jobs.khoslaventures.com/jobs
+    enabled: true
+  
+  # Frontier / model labs
+  - name: Anthropic
+    careers_url: https://job-boards.greenhouse.io/anthropic
+    api: https://boards-api.greenhouse.io/v1/boards/anthropic/jobs
+    enabled: true
+
+  - name: OpenAI
+    careers_url: https://openai.com/careers
+    scan_method: websearch
+    scan_query: 'site:openai.com/careers "AI Engineer" OR "Applied AI" OR "Platform" OR "Research Engineer"'
+    enabled: true
+
+  - name: Cohere
+    careers_url: https://jobs.ashbyhq.com/cohere
+    enabled: true
+
+  - name: Mistral AI
+    careers_url: https://jobs.lever.co/mistral
+    enabled: true
+
+  - name: Perplexity
+    careers_url: https://jobs.ashbyhq.com/perplexity
+    enabled: true
+
+  # Voice / conversational AI
+  - name: ElevenLabs
+    careers_url: https://jobs.ashbyhq.com/elevenlabs
+    enabled: true
+
+  - name: Deepgram
+    careers_url: https://jobs.ashbyhq.com/deepgram
+    enabled: true
+
+  - name: Vapi
+    careers_url: https://jobs.ashbyhq.com/vapi
+    enabled: true
+
+  - name: Hume AI
+    careers_url: https://job-boards.greenhouse.io/humeai
+    api: https://boards-api.greenhouse.io/v1/boards/humeai/jobs
+    enabled: true
+
+  - name: PolyAI
+    careers_url: https://job-boards.eu.greenhouse.io/polyai
+    api: https://boards-api.greenhouse.io/v1/boards/polyai/jobs
+    enabled: true
+
+  - name: Parloa
+    careers_url: https://job-boards.eu.greenhouse.io/parloa
+    api: https://boards-api.greenhouse.io/v1/boards/parloa/jobs
+    enabled: true
+
+  - name: Intercom
+    careers_url: https://job-boards.greenhouse.io/intercom
+    api: https://boards-api.greenhouse.io/v1/boards/intercom/jobs
+    enabled: true
+
+  # Agentic / workflow / infra / developer tools
+  - name: Temporal
+    careers_url: https://job-boards.greenhouse.io/temporal
+    api: https://boards-api.greenhouse.io/v1/boards/temporal/jobs
+    enabled: true
+
+  - name: LangChain
+    careers_url: https://jobs.ashbyhq.com/langchain
+    enabled: true
+
+  - name: Glean
+    careers_url: https://job-boards.greenhouse.io/gleanwork
+    api: https://boards-api.greenhouse.io/v1/boards/gleanwork/jobs
+    enabled: true
+
+  - name: Arize AI
+    careers_url: https://job-boards.greenhouse.io/arizeai
+    api: https://boards-api.greenhouse.io/v1/boards/arizeai/jobs
+    enabled: true
+
+  - name: RunPod
+    careers_url: https://job-boards.greenhouse.io/runpod
+    api: https://boards-api.greenhouse.io/v1/boards/runpod/jobs
+    enabled: true
+
+  - name: Pinecone
+    careers_url: https://jobs.ashbyhq.com/pinecone
+    enabled: true
+
+  - name: Supabase
+    careers_url: https://jobs.ashbyhq.com/supabase
+    enabled: true
+
+  - name: Inngest
+    careers_url: https://jobs.ashbyhq.com/inngest
+    enabled: true
+
+  - name: WorkOS
+    careers_url: https://jobs.ashbyhq.com/workos
+    enabled: true
+
+  - name: PlanetScale
+    careers_url: https://job-boards.greenhouse.io/planetscale
+    api: https://boards-api.greenhouse.io/v1/boards/planetscale/jobs
+    enabled: true
+
+  # AI-native product/platform companies
+  - name: Airtable
+    careers_url: https://job-boards.greenhouse.io/airtable
+    api: https://boards-api.greenhouse.io/v1/boards/airtable/jobs
+    enabled: true
+
+  - name: Vercel
+    careers_url: https://job-boards.greenhouse.io/vercel
+    api: https://boards-api.greenhouse.io/v1/boards/vercel/jobs
+    enabled: true
+
+  - name: Retool
+    careers_url: https://retool.com/careers
+    enabled: true
+
+  - name: Decagon
+    careers_url: https://jobs.ashbyhq.com/decagon
+    enabled: true
+
+  - name: Sierra
+    careers_url: https://jobs.ashbyhq.com/sierra
+    enabled: true
+
+  - name: Bland AI
+    careers_url: https://jobs.ashbyhq.com/bland
+    enabled: true
+
+  - name: Speechmatics
+    careers_url: https://job-boards.greenhouse.io/speechmatics
+    api: https://boards-api.greenhouse.io/v1/boards/speechmatics/jobs
+    enabled: true
+
+  - name: Runway
+    careers_url: https://job-boards.greenhouse.io/runwayml
+    api: https://boards-api.greenhouse.io/v1/boards/runwayml/jobs
+    enabled: true

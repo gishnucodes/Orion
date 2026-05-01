@@ -1,0 +1,63 @@
+match:
+  threshold: 3.0
+location:
+  allowed:
+    - Remote
+    - United States
+    - US
+    - California
+    - New York
+    - North Carolina
+    - Florida
+    - Texas
+    - Arizona
+    - Colorado
+    - Washington
+    - Oregon
+    - Idaho
+    - Montana
+    - Wyoming
+    - Utah
+    - Nevada
+    - New Mexico
+    - Hawaii
+    - Arkansas
+    - Louisiana
+    - Mississippi
+    - Alabama
+    - Georgia
+    - South Carolina
+    - North Carolina
+    - Tennessee
+    - Kentucky
+
+model:
+  runner: ollama
+  model_name: qwen2.5:0.5b
+  model_path: models/qwen2.5-0.5b-instruct.gguf
+  params:
+    temp: 0
+    top_p: 1
+    top_k: 1
+    seed: 42
+    ctx: 4096
+paths:
+  db: db/jobs.sqlite
+  raw_dir: raw
+  output_dir: output
+extract:
+  max_jobs: 2000
+  timeout_ms: 21600000
+scan:
+  use_search_queries: true
+  search_provider: searxng
+  searxng_url: http://localhost:8080
+  search_max_results: 20
+  verify_search_results: true
+  verify_min_text: 300
+entity_scoring:
+  preferred_seniority: []
+  disallowed_employment_types: []
+  allow_work_auth_required: true
+  required_skill_overlap_bonus: 3
+  max_delta: 1
