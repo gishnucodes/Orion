@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Orion job scanner daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Catch up after a reboot or a powered-off window instead of silently skipping.
+Persistent=true
+# Avoid every deployment hammering job boards at exactly 03:00.
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target

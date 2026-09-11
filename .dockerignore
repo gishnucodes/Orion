@@ -1,0 +1,17 @@
+# Keep the build context small and reproducible. Node deps and the browser
+# cache are rebuilt inside the image; local state must never leak in.
+.git
+node_modules
+.playwright
+db
+raw
+output
+models
+.cache
+.env
+*.log
+.DS_Store
+
+# Stray duplicate downloads (the "name (1).ext" files).
+*\ (1).*
+**/*\ (1).*

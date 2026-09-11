@@ -1,0 +1,16 @@
+# What NOT to upload to Cloud Build. Dependencies and browsers are installed
+# inside the image; local state and secrets must never be uploaded.
+.git
+.gitignore
+node_modules
+.playwright
+db
+raw
+output
+models
+.cache
+.env
+*.log
+.DS_Store
+*\ (1).*
+**/*\ (1).*

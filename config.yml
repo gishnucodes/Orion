@@ -1,5 +1,3 @@
-match:
-  threshold: 3.0
 location:
   allowed:
     - Remote
@@ -30,34 +28,335 @@ location:
     - North Carolina
     - Tennessee
     - Kentucky
+  # Location is a gate, not a score component. A job is gated out only when its
+  # location explicitly names one of these and nothing US-side; unknown or
+  # unlisted US locations pass.
+  excluded:
+    - Europe
+    - EMEA
+    - APAC
+    - LATAM
+    - Middle East
+    - UK
+    - United Kingdom
+    - England
+    - London
+    - Ireland
+    - Dublin
+    - Germany
+    - Berlin
+    - Munich
+    - France
+    - Paris
+    - Netherlands
+    - Amsterdam
+    - Spain
+    - Madrid
+    - Barcelona
+    - Portugal
+    - Lisbon
+    - Italy
+    - Poland
+    - Switzerland
+    - Zurich
+    - Sweden
+    - Stockholm
+    - Denmark
+    - Copenhagen
+    - Canada
+    - Toronto
+    - Vancouver
+    - Montreal
+    - India
+    - Bangalore
+    - Bengaluru
+    - Hyderabad
+    - Singapore
+    - Japan
+    - Tokyo
+    - Korea
+    - Seoul
+    - Australia
+    - Sydney
+    - Brazil
+    - Mexico
+    - Israel
+    - Tel Aviv
+    - UAE
+    - Dubai
+    - Norway
+    - Oslo
+    - Finland
+    - Helsinki
+    - Denmark
+    - Belgium
+    - Brussels
+    - Austria
+    - Vienna
+    - Czech Republic
+    - Prague
+    - Hungary
+    - Budapest
+    - Romania
+    - Bucharest
+    - Bulgaria
+    - Greece
+    - Athens
+    - Serbia
+    - Belgrade
+    - Croatia
+    - Ukraine
+    - Kyiv
+    - Estonia
+    - Lithuania
+    - Latvia
+    - Turkey
+    - Istanbul
+    - Cyprus
+    - Luxembourg
+    - Scotland
+    - Edinburgh
+    - Manchester
+    - Hamburg
+    - Frankfurt
+    - Warsaw
+    - Krakow
+    - Ontario
+    - Quebec
+    - British Columbia
+    - Alberta
+    - Gurugram
+    - Gurgaon
+    - Noida
+    - Pune
+    - Chennai
+    - Mumbai
+    - Delhi
+    - China
+    - Beijing
+    - Shanghai
+    - Shenzhen
+    - Hong Kong
+    - Taiwan
+    - Taipei
+    - Philippines
+    - Manila
+    - Vietnam
+    - Indonesia
+    - Malaysia
+    - Thailand
+    - New Zealand
+    - South Africa
+    - Nigeria
+    - Kenya
+    - Egypt
+    - Pakistan
+    - Argentina
+    - Buenos Aires
+    - Colombia
+    - Bogota
+    - Chile
+    - Sao Paulo
+    - São Paulo
+    - Mexico City
+    - Armenia
 
 model:
-  runner: ollama
-  model_name: qwen2.5:0.5b
+  # Cloud deployment: Gemini via the Generative Language API. Requires
+  # GEMINI_API_KEY in the environment (.env on the server). gemini-2.0-flash-lite
+  # is the cheapest capable model for this structured-extraction task
+  # (~$0.10/1M input, $0.40/1M output) and far stronger than the old 0.5B local
+  # model. Set runner back to `ollama` to run fully local/offline again.
+  runner: gemini
+  # Gemini deprecates/retires models often. This can be overridden at runtime
+  # with the GEMINI_MODEL env var so a model swap needs no image rebuild — see
+  # the current list: curl .../v1beta/models. gemini-flash-lite-latest is an
+  # auto-updating alias if you would rather not pin.
+  model_name: gemini-3.5-flash-lite
+  gemini_url: https://generativelanguage.googleapis.com/v1beta
+  # Local fallbacks (used only when runner is ollama / llama-cli):
   model_path: models/qwen2.5-0.5b-instruct.gguf
+  ollama_url: http://localhost:11434/api/chat
+  # Abort a single generation that hangs. Greedy decoding on a 0.5B model used
+  # to loop until the context filled, stalling the stage for minutes per job.
+  request_timeout_ms: 60000
   params:
     temp: 0
     top_p: 1
     top_k: 1
     seed: 42
     ctx: 4096
+    # The schema needs ~150-250 tokens with the nice-to-have and seniority
+    # fields; 500 keeps long skill lists from truncating into invalid JSON.
+    num_predict: 500
 paths:
   db: db/jobs.sqlite
   raw_dir: raw
   output_dir: output
 extract:
   max_jobs: 2000
-  timeout_ms: 21600000
+  # Per-page navigation timeout. This was previously `timeout_ms: 21600000`,
+  # which was passed straight into page.goto() and let a single hung page stall
+  # the whole run for six hours.
+  page_timeout_ms: 30000
+  # Total wall-clock budget for the stage. On expiry the run stops cleanly and
+  # the remaining jobs are picked up by the next run.
+  total_budget_ms: 5400000
+  concurrency: 4
+  per_host_concurrency: 2
+  # Characters of page text sent to the model. Trimmed from 12000: the extra
+  # context measurably degraded a 0.5B model's JSON adherence.
+  input_chars: 6000
 scan:
-  use_search_queries: true
-  search_provider: searxng
+  # Search-based discovery is disabled: the Custom Search JSON API is blocked on
+  # this project (the prepaid billing account has no funds, and that API has no
+  # free-key path). The 248 direct-API company boards in portals.tracked_companies
+  # already give strong coverage, so search is skipped. Re-enable (and set
+  # search_provider to `duckduckgo` for a no-billing option, or `google` once the
+  # billing account is funded) to turn it back on.
+  use_search_queries: false
+  # Reject jobs at scan time whose title cannot match portals.title_filter, so
+  # irrelevant postings are never page-fetched, extracted (Gemini), or stored.
+  # Extraction is the scarcest resource, so this is the biggest cost lever.
+  # Set false to ingest everything and filter only at scoring time.
+  filter_by_title: true
+  # Cloud deployment: Google Programmable Search (Custom Search JSON API).
+  # Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX in the environment.
+  # `duckduckgo` (HTML scrape, no key) and `searxng` (self-hosted) remain
+  # available as fallbacks.
+  search_provider: google
   searxng_url: http://localhost:8080
-  search_max_results: 20
+  # The Custom Search API returns 10 results per billable request and allows
+  # 100 free requests/day. At 10 (one request per query) this query set stays
+  # inside the free tier; 20 doubles the request count into paid territory.
+  search_max_results: 10
   verify_search_results: true
   verify_min_text: 300
-entity_scoring:
-  preferred_seniority: []
-  disallowed_employment_types: []
-  allow_work_auth_required: true
-  required_skill_overlap_bonus: 3
-  max_delta: 1
+  concurrency: 4
+  per_host_concurrency: 2
+  page_timeout_ms: 30000
+notify:
+  # Only push jobs still seen on a board within this many days. Guards against
+  # emailing dead links when the database carries older postings.
+  max_age_days: 7
+# Scoring v2 (src/score.mjs, src/scoring/). Score is 0-100, shown as x.x/10.
+#
+#   base  = 0.30·Skills + 0.45·Keywords + 0.25·Semantic
+#   Score = 100 · clamp(base + Δ, 0, 1)
+#
+# Keyword-weighted for ATS fit. Weights are renormalised over the components a
+# job has (e.g. no Gemini extraction yet -> Keywords + Semantic only, "partial").
+scoring_v2:
+  weights: { skills: 0.30, keywords: 0.45, semantic: 0.25 }
+  # Minimum score (0-100) to count as a match, and the most matches emailed per day.
+  threshold: 65
+  daily_top_n: 15
+  # A job needs at least this many of the three components to be a match.
+  min_components: 2
+  skills:
+    required_weight: 0.7   # required-skill coverage vs other/nice-to-have
+    alpha: 2               # shrinkage: short skill lists pull toward `prior`
+    prior: 0.3
+    related_credit: 0.5    # TypeScript when the CV has JavaScript, etc.
+  keywords:
+    title_weight: 0.25     # K = 0.25·title tier + 0.75·ATS match rate
+    top_k: 25              # JD keywords considered (plus all extracted skills)
+    required_boost: 1.5
+    alias_credit: 0.7      # synonym-only match; flagged as a resume gap
+    alpha: 2               # shrinkage for postings with only a few keywords
+    prior: 0.3
+    # Extra phrases to look for in postings beyond extracted skills + ontology.
+    extra_terms:
+      - agentic
+      - multi-agent
+      - orchestration
+      - retrieval
+      - web scraping
+      - data extraction
+      - computer use
+      - graph neural networks
+      - optimization
+      - realtime
+    title_tiers:
+      - weight: 1.0
+        patterns:
+          - AI Engineer
+          - Applied AI Engineer
+          - ML Engineer
+          - Machine Learning Engineer
+          - LLM Engineer
+          - Generative AI Engineer
+          - GenAI Engineer
+          - Agent Engineer
+          - Agentic Engineer
+          - AI Platform Engineer
+          - ML Platform Engineer
+          - MLOps Engineer
+          - LLMOps Engineer
+          - AI Infrastructure Engineer
+          - AI Systems Engineer
+          - Voice AI
+          - Speech AI
+          - Conversational AI
+          - RAG Engineer
+      - weight: 0.75
+        patterns:
+          - Backend Engineer
+          - Software Engineer
+          - Platform Engineer
+          - Distributed Systems Engineer
+          - Infrastructure Engineer
+      - weight: 0.6
+        patterns:
+          - Forward Deployed Engineer
+          - Deployment Engineer
+          - Solutions Engineer
+          - Solutions Architect
+          - Research Engineer
+  semantic:
+    enabled: true
+    model: Xenova/bge-small-en-v1.5
+    dtype: q8
+    # Per-requirement cosine calibration: <= tau_lo counts 0, >= tau_hi counts 1.
+    tau_lo: 0.55
+    tau_hi: 0.80
+    max_chunks: 40
+    batch_size: 32
+    # Jobs not embedded within the budget score as partial and are done next run.
+    time_budget_ms: 1800000
+  entity:
+    # Industry experience from the CV: Credit Suisse 2019-2024 + PhysicianX 2025-.
+    your_years: 6
+    seniority_delta:
+      intern: -0.10
+      junior: -0.05
+      mid: 0.05
+      senior: 0.05
+      staff: 0
+      principal: -0.05
+      manager: -0.10
+      director_plus: -0.10
+      unknown: 0
+    years_bonus: 0.03
+    years_penalty: 0.03
+    years_penalty_span: 3
+    disallowed_employment_types: []
+    employment_penalty: 0.10
+    # Set true if you need visa sponsorship: postings that rule it out get -0.10.
+    requires_sponsorship: false
+    sponsorship_penalty: 0.10
+    domains:
+      - ai agents
+      - agentic
+      - rag
+      - llm
+      - mcp
+      - voice ai
+      - conversational ai
+      - orchestration
+      - knowledge graph
+      - multi-agent
+    domain_min: 2
+    domain_bonus: 0.02
+    delta_min: -0.15
+    delta_max: 0.10

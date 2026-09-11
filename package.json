@@ -4,15 +4,21 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "doctor": "node src/doctor.mjs",
-    "scan": "node src/scan.mjs",
-    "extract": "node src/extract.mjs",
-    "score": "node src/score.mjs",
-    "report": "node src/report.mjs",
+    "doctor": "node --env-file-if-exists=.env src/doctor.mjs",
+    "scan": "node --env-file-if-exists=.env src/scan.mjs",
+    "extract": "node --env-file-if-exists=.env src/extract.mjs",
+    "score": "node --env-file-if-exists=.env src/score.mjs",
+    "report": "node --env-file-if-exists=.env src/report.mjs",
+    "export-bq": "node --env-file-if-exists=.env src/export-bq.mjs",
+    "notify": "node --env-file-if-exists=.env src/notify.mjs",
     "run-daily": "node src/run-daily.mjs",
-    "dashboard": "node dashboard/server.mjs"
+    "dashboard": "node dashboard/server.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
+    "@google-cloud/bigquery": "^8.3.1",
+    "@google-cloud/storage": "^7.22.0",
+    "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^11.5.0",
     "express": "^4.21.2",
     "js-yaml": "^4.1.0",

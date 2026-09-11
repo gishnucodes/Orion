@@ -33,6 +33,11 @@ export function openDb(dbPath) {
       created_at TEXT,
       FOREIGN KEY(job_id) REFERENCES jobs(id)
     );
+    CREATE TABLE IF NOT EXISTS notified (
+      job_id INTEGER PRIMARY KEY,
+      notified_at TEXT,
+      FOREIGN KEY(job_id) REFERENCES jobs(id)
+    );
     CREATE TABLE IF NOT EXISTS runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_date TEXT NOT NULL,
@@ -40,6 +45,20 @@ export function openDb(dbPath) {
       counts_json TEXT,
       duration_ms INTEGER
     );
+    -- Per-job semantic match, reused until the posting, CV or model changes.
+    CREATE TABLE IF NOT EXISTS semantic_cache (
+      job_id INTEGER PRIMARY KEY,
+      text_hash TEXT NOT NULL,
+      cv_hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      sims_json TEXT NOT NULL,
+      created_at TEXT,
+      FOREIGN KEY(job_id) REFERENCES jobs(id)
+    );
   `);
+  // Posting text, persisted so keyword and semantic scoring survive the
+  // ephemeral Cloud Run filesystem (raw/ files do not).
+  const jobColumns = db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name);
+  if (!jobColumns.includes('description')) db.exec('ALTER TABLE jobs ADD COLUMN description TEXT');
   return db;
 }

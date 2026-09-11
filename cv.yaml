@@ -1,0 +1,58 @@
+name: John Doe
+title: Applied AI Engineer
+location: New York, NY
+email: john.doe@example.com
+phone: "+1-555-010-1234"
+links:
+  website: https://johndoe.dev
+  linkedin: https://linkedin.com/in/johndoe
+  github: https://github.com/johndoe
+
+summary: >
+  Applied AI engineer with experience building LLM-powered products,
+  backend services, and data pipelines. Interested in agentic systems,
+  search/retrieval, and production AI infrastructure.
+
+experience:
+  - company: ExampleAI
+    role: Senior AI Engineer
+    location: Remote
+    start: 2022-01
+    end: Present
+    highlights:
+      - Built an LLM-based job matching system for internal recruiting workflows.
+      - Improved extraction quality with deterministic post-processing rules.
+      - Reduced pipeline runtime by optimizing scraping and scoring stages.
+
+  - company: DataForge Labs
+    role: Software Engineer
+    location: Boston, MA
+    start: 2019-06
+    end: 2021-12
+    highlights:
+      - Developed backend APIs for analytics and recommendation services.
+      - Automated reporting workflows and improved data quality checks.
+
+education:
+  - institution: State University
+    degree: MS in Computer Science
+    start: 2017-08
+    end: 2019-05
+
+skills:
+  languages:
+    - Python
+    - JavaScript
+    - SQL
+  frameworks:
+    - FastAPI
+    - Node.js
+    - Playwright
+  ai_ml:
+    - LLM applications
+    - RAG
+    - Prompt engineering
+  tools:
+    - Docker
+    - Git
+    - Linux
