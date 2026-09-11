@@ -3,3 +3,9 @@ output
 raw
 db
 cv_copy.md
+cv.md
+.env
+.DS_Store
+raw-test
+db/test.sqlite
+.cache

@@ -4,10 +4,11 @@ import { nowIsoDate } from './utils.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createLogger } from './logger.mjs';
+import { resolveScoringConfig } from './scoring/formula.mjs';
 
 function formatJob(job) {
   const reasons = job.reasons?.length ? ` | reasons: ${job.reasons.join('; ')}` : '';
-  return `- ${job.company || 'Unknown'} | ${job.title || 'Untitled'} | ${job.url} | score ${job.score.toFixed(1)}${reasons}`;
+  return `- ${job.company || 'Unknown'} | ${job.title || 'Untitled'} | ${job.url} | score ${(job.score / 10).toFixed(1)}/10${reasons}`;
 }
 
 async function main() {
@@ -36,7 +37,7 @@ async function main() {
   const lines = [];
   lines.push(`# Daily Apply List — ${nowIsoDate()}`);
   lines.push('');
-  lines.push(`Threshold: ${config.match?.threshold ?? 4.0}`);
+  lines.push(`Threshold: ${(resolveScoringConfig(config).threshold / 10).toFixed(1)}/10`);
   lines.push('');
   lines.push('## Apply (Manual)');
   if (matched.length === 0) {

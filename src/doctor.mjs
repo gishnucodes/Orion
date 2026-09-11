@@ -15,7 +15,14 @@ async function main() {
   if (!existsSync(portalsPath)) issues.push(`Missing portals.yml at ${portalsPath}`);
   if (!existsSync(cvPath)) issues.push(`Missing cv.md at ${cvPath}`);
 
-  if (config.model.runner === 'ollama') {
+  if (config.model.runner === 'gemini') {
+    if (!config.model.model_name) {
+      issues.push('Missing model.model_name for gemini runner (e.g. gemini-2.0-flash-lite)');
+    }
+    if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+      issues.push('GEMINI_API_KEY not set (required for model.runner: gemini). Get one at https://aistudio.google.com/apikey');
+    }
+  } else if (config.model.runner === 'ollama') {
     if (!config.model.model_name) {
       issues.push('Missing model.model_name for ollama runner');
     }
@@ -28,6 +35,15 @@ async function main() {
     }
     if (!checkRunner(config.model.runner)) {
       issues.push(`llama.cpp runner not found in PATH: ${config.model.runner}`);
+    }
+  }
+
+  if (config.scan?.search_provider === 'google') {
+    if (!process.env.GOOGLE_SEARCH_API_KEY) {
+      issues.push('GOOGLE_SEARCH_API_KEY not set (required for scan.search_provider: google)');
+    }
+    if (!process.env.GOOGLE_SEARCH_CX) {
+      issues.push('GOOGLE_SEARCH_CX not set (Programmable Search engine id; https://programmablesearchengine.google.com)');
     }
   }
 

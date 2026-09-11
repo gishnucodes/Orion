@@ -1,0 +1,33 @@
+[Unit]
+Description=Orion job scanner — daily scan, extract, score, report, notify
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=orion
+WorkingDirectory=/opt/orion
+EnvironmentFile=/opt/orion/.env
+ExecStart=/usr/bin/node src/run-daily.mjs
+
+# The pipeline is long-running and network-bound; without a cap a wedged run
+# could still be alive when tomorrow's timer fires. This is a backstop above
+# the in-process extract.total_budget_ms, not a replacement for it.
+TimeoutStartSec=3h
+
+# Playwright needs a writable browser cache; point it somewhere stable so the
+# service does not re-resolve it per user.
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/orion/.playwright
+
+StandardOutput=journal
+StandardError=journal
+
+# Hardening. The pipeline only ever writes inside its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/orion
+
+[Install]
+WantedBy=multi-user.target

@@ -1,185 +1,217 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { loadConfig } from './config.mjs';
 import { openDb } from './db.mjs';
-import { nowIsoDate } from './utils.mjs';
+import { nowIsoDate, safeJsonParse } from './utils.mjs';
 import { createLogger } from './logger.mjs';
+import { cvChunks, jdChunks, jdKeywordText, sha1 } from './scoring/text.mjs';
+import {
+  resolveScoringConfig, buildCvProfile, buildVocabulary, jdTerms, skillsScore, titleScore,
+  keywordBodyScore, semanticScore, entityDelta, gate, combine
+} from './scoring/formula.mjs';
+import { createEmbedder, bestMatches } from './scoring/semantic.mjs';
 
-function extractSkills(cvText) {
-  const lines = cvText.split(/\r?\n/);
-  let inSkills = false;
-  const collected = [];
-  for (const line of lines) {
-    const heading = line.match(/^#+\s*(.+)$/);
-    if (heading) {
-      inSkills = /skills/i.test(heading[1]);
-      continue;
+const round3 = (x) => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : null);
+
+function jobText(row) {
+  if (row.description && row.description.length >= 200) return row.description;
+  if (row.raw_path && existsSync(row.raw_path)) return readFileSync(row.raw_path, 'utf8');
+  return row.description || '';
+}
+
+/**
+ * Fill semantic_cache for every job that needs it, freshest postings first,
+ * until the time budget runs out. Jobs left over simply score as `partial`
+ * tonight and are embedded on a later run.
+ */
+async function refreshSemantic({ db, jobs, cv, cfg, logger }) {
+  const cvHash = sha1(cv);
+  const cached = new Map(db.prepare('SELECT job_id, text_hash, cv_hash, model, sims_json FROM semantic_cache').all()
+    .map((r) => [r.job_id, r]));
+  const sims = new Map();
+  const todo = [];
+  for (const job of jobs) {
+    const hit = cached.get(job.id);
+    if (hit && hit.text_hash === job.textHash && hit.cv_hash === cvHash && hit.model === cfg.model) {
+      sims.set(job.id, safeJsonParse(hit.sims_json));
+    } else {
+      todo.push(job);
     }
-    if (!inSkills) continue;
-    if (!line.trim()) continue;
-    const cleaned = line.replace(/^[-*]\s*/, '');
-    collected.push(cleaned);
   }
-  const tokens = collected.join(',').split(/[,/|]/).map((s) => s.trim()).filter(Boolean);
-  return Array.from(new Set(tokens.map((s) => s.toLowerCase())));
-}
+  const stats = { cached: sims.size, embedded: 0, deferred: 0, failed: false };
+  if (todo.length === 0) return { sims, stats };
 
-function matchTitle(title, positive, negative) {
-  const t = (title || '').toLowerCase();
-  if (negative.some((n) => t.includes(n.toLowerCase()))) return { score: 0, blocked: true };
-  if (positive.some((p) => t.includes(p.toLowerCase()))) return { score: 2, blocked: false };
-  return { score: 0, blocked: false };
-}
-
-function matchSkills(extractedSkills, cvSkills) {
-  const ex = (extractedSkills || [])
-    .filter((s) => typeof s === 'string' && s.trim().length > 0)
-    .map((s) => s.toLowerCase());
-  const overlap = ex.filter((s) => cvSkills.includes(s));
-  if (overlap.length >= 5) return { score: 2, overlap };
-  if (overlap.length >= 2) return { score: 1, overlap };
-  return { score: 0, overlap };
-}
-
-function matchLocation(extraction, allowed) {
-  const location = (extraction.location || '').toLowerCase();
-  const remote = extraction.remote === true;
-  if (remote) return 1;
-  if (allowed.some((a) => location.includes(a.toLowerCase()))) return 1;
-  return 0;
-}
-
-function buildReasons({ titleMatch, skillMatch, locationScore, threshold, total, entityReasons }) {
-  const reasons = [];
-  if (titleMatch.blocked) reasons.push('Title contains negative keyword');
-  if (!titleMatch.blocked && titleMatch.score === 0) reasons.push('Title did not match positive keywords');
-  if (skillMatch.score === 0) reasons.push('Skill overlap below minimum');
-  if (locationScore === 0) reasons.push('Location/remote mismatch');
-  if (total < threshold) reasons.push(`Score ${total.toFixed(1)} below threshold ${threshold}`);
-  for (const reason of entityReasons || []) reasons.push(reason);
-  if (reasons.length === 0) reasons.push('Matched');
-  return reasons;
-}
-
-function computeEntityDelta(entityGraph, cvSkills, entityConfig) {
-  const requiredSkills = (entityGraph.required_skills || [])
-    .filter((s) => typeof s === 'string')
-    .map((s) => s.toLowerCase());
-  const techStack = (entityGraph.tech_stack || [])
-    .filter((s) => typeof s === 'string')
-    .map((s) => s.toLowerCase());
-  const requiredOverlap = requiredSkills.filter((s) => cvSkills.includes(s));
-  const techOverlap = techStack.filter((s) => cvSkills.includes(s));
-
-  const preferredSeniority = (entityConfig.preferred_seniority || [])
-    .filter((s) => typeof s === 'string')
-    .map((s) => s.toLowerCase());
-  const seniority = (entityGraph.seniority || '').toLowerCase();
-  const seniorityMatch = preferredSeniority.length > 0
-    ? preferredSeniority.some((s) => seniority.includes(s))
-    : false;
-
-  const disallowedEmploymentTypes = (entityConfig.disallowed_employment_types || [])
-    .filter((s) => typeof s === 'string')
-    .map((s) => s.toLowerCase());
-  const employmentType = (entityGraph.employment_type || '').toLowerCase();
-  const workAuth = (entityGraph.work_authorization || '').trim();
-
-  const reasons = [];
-  let delta = 0;
-
-  if (disallowedEmploymentTypes.length > 0 && disallowedEmploymentTypes.some((t) => employmentType.includes(t))) {
-    delta = -1;
-    reasons.push('Disallowed employment type');
-  }
-  if (entityConfig.allow_work_auth_required === false && workAuth.length > 0) {
-    delta = -1;
-    reasons.push('Work authorization required');
+  let embedder;
+  try {
+    embedder = await createEmbedder({ model: cfg.model, dtype: cfg.dtype, batchSize: cfg.batch_size });
+  } catch (err) {
+    logger.error(`Embedding model unavailable (${err?.message || err}); semantic component skipped this run`);
+    return { sims, stats: { ...stats, failed: true, deferred: todo.length } };
   }
 
-  const overlapMin = entityConfig.required_skill_overlap_bonus ?? 3;
-  const positiveSignal = requiredOverlap.length >= overlapMin || (techOverlap.length > 0 && seniorityMatch);
-  if (delta === 0 && positiveSignal) {
-    delta = 1;
-    reasons.push('Entity graph skill/stack match');
+  const cvVectors = await embedder.embed(cvChunks(cv));
+  const upsert = db.prepare(`
+    INSERT OR REPLACE INTO semantic_cache (job_id, text_hash, cv_hash, model, sims_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)`);
+  todo.sort((a, b) => String(b.last_seen).localeCompare(String(a.last_seen)) || b.id - a.id);
+  const deadline = Date.now() + cfg.time_budget_ms;
+
+  for (const job of todo) {
+    if (Date.now() > deadline) { stats.deferred += 1; continue; }
+    const chunks = jdChunks(job.text, cfg.max_chunks);
+    const result = chunks.length
+      ? bestMatches(await embedder.embed(chunks.map((c) => c.text)), chunks.map((c) => c.weight), cvVectors)
+      : [];
+    upsert.run(job.id, job.textHash, cvHash, cfg.model, JSON.stringify(result), nowIsoDate());
+    sims.set(job.id, result);
+    stats.embedded += 1;
+    if (stats.embedded % 250 === 0) logger.info(`Semantic: embedded ${stats.embedded}/${todo.length}`);
   }
-
-  const maxDelta = entityConfig.max_delta ?? 1;
-  if (delta > maxDelta) delta = maxDelta;
-  if (delta < -maxDelta) delta = -maxDelta;
-
-  return {
-    delta,
-    reasons,
-    required_overlap: requiredOverlap,
-    tech_overlap: techOverlap,
-    seniority_match: seniorityMatch
-  };
+  return { sims, stats };
 }
 
 async function main() {
   const { config, cv, paths, portals } = loadConfig();
   const db = openDb(paths.db);
   const logger = createLogger(paths.outputDir, 'score');
-  logger.info('Score started');
+  const startedAt = Date.now();
+  logger.info('Score (v2) started');
 
-  const cvSkills = extractSkills(cv);
-  const positive = portals.title_filter?.positive || [];
+  const cfg = resolveScoringConfig(config);
   const negative = portals.title_filter?.negative || [];
+  const positive = config.scan?.filter_by_title !== false ? portals.title_filter?.positive || [] : [];
   const allowed = config.location?.allowed || [];
-  const entityConfig = config.entity_scoring || {};
+  const excluded = config.location?.excluded || [];
 
-  const jobs = db.prepare(`
-    SELECT j.id, j.title AS job_title, e.json AS extraction_json
+  const rows = db.prepare(`
+    SELECT j.id, j.title, j.company, j.location, j.last_seen, j.description, j.raw_path,
+           e.json AS extraction_json, e.status AS extraction_status
     FROM jobs j
-    JOIN extractions e ON e.job_id = j.id
-    WHERE e.id IN (SELECT MAX(id) FROM extractions GROUP BY job_id)
+    LEFT JOIN extractions e ON e.id = (SELECT MAX(id) FROM extractions WHERE job_id = j.id)
   `).all();
 
-  logger.info(`Jobs to score: ${jobs.length}`);
+  const jobs = rows.map((row) => {
+    const text = jobText(row);
+    const extraction = row.extraction_status === 'ok' ? safeJsonParse(row.extraction_json) : null;
+    return { ...row, text, textHash: sha1(text), extraction };
+  });
+
+  // Corpus statistics: vocabulary from every extraction, document frequency
+  // over every posting text. Both improve as the database grows.
+  const vocab = buildVocabulary(jobs.filter((j) => j.extraction).map((j) => j.extraction), cfg.keywords.extra_terms);
+  const df = new Map();
+  let corpusSize = 0;
   for (const job of jobs) {
-    const extraction = job.extraction_json ? JSON.parse(job.extraction_json) : {};
-    const title = extraction.title || job.job_title || '';
+    job.terms = jdTerms(jdKeywordText(job.text), vocab);
+    if (job.text) corpusSize += 1;
+    for (const c of job.terms.keys()) df.set(c, (df.get(c) ?? 0) + 1);
+  }
+  logger.info(`Jobs=${jobs.length} with_text=${corpusSize} with_extraction=${jobs.filter((j) => j.extraction).length} vocab=${vocab.size}`);
 
-    const titleMatch = matchTitle(title, positive, negative);
-    const skillMatch = matchSkills(extraction.skills, cvSkills);
-    const locationScore = matchLocation(extraction, allowed);
-
-    const entityGraph = extraction.entity_graph || {};
-    const entityDelta = computeEntityDelta(entityGraph, cvSkills, entityConfig);
-    const baseScore = titleMatch.score + skillMatch.score + locationScore;
-    const total = Math.min(5, Math.max(0, baseScore + entityDelta.delta));
-    const threshold = config.match?.threshold ?? 4.0;
-    const matched = !titleMatch.blocked && total >= threshold;
-
-    const breakdown = {
-      titleScore: titleMatch.score,
-      skillScore: skillMatch.score,
-      locationScore,
-      overlap: skillMatch.overlap,
-      entity_delta: entityDelta.delta,
-      entity_reasons: entityDelta.reasons,
-      entity_overlap: {
-        required: entityDelta.required_overlap,
-        tech_stack: entityDelta.tech_overlap,
-        seniority_match: entityDelta.seniority_match
-      },
-      reasons: buildReasons({
-        titleMatch,
-        skillMatch,
-        locationScore,
-        threshold,
-        total,
-        entityReasons: entityDelta.reasons
-      })
-    };
-
-    db.prepare('INSERT INTO scores (job_id, score, matched, breakdown_json, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(job.id, total, matched ? 1 : 0, JSON.stringify(breakdown), nowIsoDate());
-    logger.info(`Job ${job.id} score=${total} base=${baseScore} delta=${entityDelta.delta} matched=${matched}`);
+  const cvProfile = buildCvProfile(cv);
+  for (const job of jobs) {
+    job.gate = gate({ title: job.title, jobLocation: job.location, extraction: job.extraction, negative, positive, allowed, excluded });
   }
 
-  logger.info(`Score finished count=${jobs.length}`);
+  let semantic = { sims: new Map(), stats: { cached: 0, embedded: 0, deferred: 0, failed: false } };
+  if (cfg.semantic.enabled) {
+    const eligible = jobs.filter((j) => !j.gate.gated && j.text);
+    semantic = await refreshSemantic({ db, jobs: eligible, cv, cfg: cfg.semantic, logger });
+    logger.info(`Semantic: ${JSON.stringify(semantic.stats)}`);
+  }
+
+  const results = [];
+  const counts = { scored: 0, unscored: 0, gated: 0, partial: 0, matched: 0 };
+  for (const job of jobs) {
+    if (!job.text && !job.extraction) { counts.unscored += 1; continue; }
+
+    const sk = skillsScore(job.extraction, cvProfile, cfg.skills);
+    const kt = titleScore(job.title, cfg.keywords.title_tiers);
+    const kb = keywordBodyScore({
+      terms: job.terms, extraction: job.extraction, company: job.company,
+      df, corpusSize: Math.max(1, corpusSize), cv: cvProfile, cfg: cfg.keywords
+    });
+    const K = kb ? cfg.keywords.title_weight * kt.value + (1 - cfg.keywords.title_weight) * kb.value : null;
+    const sem = semanticScore(semantic.sims.get(job.id), cfg.semantic);
+    const delta = entityDelta({ title: job.title, extraction: job.extraction, text: job.text, cfg: cfg.entity });
+    const combined = combine({
+      skills: sk?.value, keywords: K, semantic: sem, delta: delta.value,
+      weights: cfg.weights, minComponents: cfg.min_components
+    });
+    if (!combined) { counts.unscored += 1; continue; }
+
+    // A match needs the posting text: without it keywords come only from a
+    // handful of extracted skills and there is no semantic evidence at all.
+    const hasText = job.text.length >= 200;
+    const matched = !job.gate.gated && hasText && combined.enough && combined.score >= cfg.threshold;
+    const reasons = [];
+    if (job.gate.gated) reasons.push(job.gate.reason);
+    if (!hasText) reasons.push('No posting text');
+    if (combined.confidence === 'partial') reasons.push(`Partial: ${combined.components_used.join('+')}`);
+    if (kb?.missing.length) reasons.push(`Missing keywords: ${kb.missing.slice(0, 6).join(', ')}`);
+    if (!matched && !job.gate.gated && hasText && combined.score < cfg.threshold) {
+      reasons.unshift(`Below threshold ${(cfg.threshold / 10).toFixed(1)}`);
+    }
+    if (reasons.length === 0) reasons.push('Matched');
+
+    const breakdown = {
+      version: 2,
+      score: combined.score,
+      confidence: combined.confidence,
+      components_used: combined.components_used,
+      skills: round3(sk?.value),
+      keywords: round3(K),
+      title: round3(kt.value),
+      title_pattern: kt.pattern,
+      keywords_body: round3(kb?.value),
+      semantic: round3(sem),
+      delta: round3(delta.value),
+      delta_parts: delta.parts,
+      seniority: delta.seniority,
+      years_min: delta.years_min,
+      domains: delta.domains,
+      gate: job.gate.reason,
+      skills_detail: sk && {
+        cov_required: round3(sk.cov_required),
+        cov_other: round3(sk.cov_other),
+        matched_required: sk.matched_required,
+        related_required: sk.related_required,
+        missing_required: sk.missing_required
+      },
+      matched_keywords: kb?.matched ?? [],
+      alias_keywords: kb?.alias ?? [],
+      missing_keywords: kb?.missing ?? [],
+      reasons
+    };
+
+    results.push({ jobId: job.id, score: combined.score, matched, breakdown });
+    counts.scored += 1;
+    if (job.gate.gated) counts.gated += 1;
+    if (combined.confidence === 'partial') counts.partial += 1;
+    if (matched) counts.matched += 1;
+  }
+
+  // Replace rather than append: only the latest score was ever read, and
+  // appending ~5,000 rows a night grew the database without bound.
+  const insert = db.prepare('INSERT INTO scores (job_id, score, matched, breakdown_json, created_at) VALUES (?, ?, ?, ?, ?)');
+  const today = nowIsoDate();
+  db.transaction(() => {
+    db.prepare('DELETE FROM scores').run();
+    for (const r of results) insert.run(r.jobId, r.score, r.matched ? 1 : 0, JSON.stringify(r.breakdown), today);
+  })();
+
+  const buckets = {};
+  for (const r of results) {
+    const b = `${Math.floor(r.score / 10) * 10}`;
+    buckets[b] = (buckets[b] ?? 0) + 1;
+  }
+  const durationMs = Date.now() - startedAt;
+  const summary = { ...counts, semantic: semantic.stats, distribution: buckets, threshold: cfg.threshold };
+  db.prepare('INSERT INTO runs (run_date, stage, counts_json, duration_ms) VALUES (?, ?, ?, ?)')
+    .run(today, 'score', JSON.stringify(summary), durationMs);
+
+  logger.info(`Score finished ${JSON.stringify(summary)} in ${Math.round(durationMs / 1000)}s`);
   logger.info(`Log file: ${logger.path}`);
-  console.log(JSON.stringify({ scored: jobs.length }, null, 2));
+  console.log(JSON.stringify(summary, null, 2));
 }
 
 main().catch((err) => {
