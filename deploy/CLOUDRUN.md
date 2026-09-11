@@ -88,6 +88,26 @@ PROJECT_ID=orion-hunter-xxxx bash deploy/cloudrun-deploy.sh
 This rebuilds the image with Cloud Build and updates the job in place. Secrets
 are read fresh on each execution, so updating a secret needs no redeploy.
 
+### Continuous deployment (push to main)
+
+`cloudbuild.yaml` runs on every push to `main` via the `orion-deploy-main`
+Cloud Build trigger: formula tests → image build (reusing cached layers) →
+push → `gcloud run jobs update --image`. Commits that only touch `*.md` or
+`docs/` are skipped. One-time setup (service account, CV secret, GitHub
+connection, trigger):
+
+```bash
+PROJECT_ID=orion-hunter-xxxx bash deploy/cloudbuild-trigger-setup.sh
+```
+
+`cv.md` is gitignored, so builds read it from the `ORION_CV_MD` secret. After
+editing your CV, refresh it (and push or re-run the trigger to rebuild):
+
+```bash
+gcloud secrets versions add ORION_CV_MD --data-file=cv.md --project orion-hunter-xxxx
+gcloud builds triggers run orion-deploy-main --branch=main --region us-central1 --project orion-hunter-xxxx
+```
+
 ## Operating
 
 ```bash
@@ -118,6 +138,14 @@ it, run locally with `.env`, upload it back), or simply accept that the first
 digest is large.
 
 ## BigQuery & Looker Studio
+
+`deploy/sql/best-matches.sql` is the apply-list query: fresh, ungated, fully
+evidenced jobs above the threshold, de-duplicated across repeat postings and
+capped per company, with the keywords to add to your resume for each.
+
+```bash
+bq query --use_legacy_sql=false < deploy/sql/best-matches.sql
+```
 
 Each run's `export-bq` stage reloads `orion.jobs` with one denormalized row per
 job (`WRITE_TRUNCATE`, so the table is always the current snapshot): job facts,

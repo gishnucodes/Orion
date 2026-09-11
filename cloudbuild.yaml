@@ -1,0 +1,56 @@
+# Continuous deployment for the Orion Cloud Run job.
+#
+# Fired by the `orion-deploy-main` trigger on every push to main (see
+# deploy/cloudbuild-trigger-setup.sh). Tests, builds the image, pushes it and
+# points the job at the new image. The schedule, env vars and secrets on the job
+# are left untouched — `jobs update --image` changes only the image.
+#
+# cv.md is gitignored (the repo is public), so the build pulls it from the
+# ORION_CV_MD secret. After editing your CV, refresh that secret:
+#   gcloud secrets versions add ORION_CV_MD --data-file=cv.md --project <project>
+
+steps:
+  # Scoring formula tests have no npm dependencies, so they run before any install.
+  - id: test
+    name: node:20-bookworm-slim
+    entrypoint: node
+    args: ['--test', 'test/']
+
+  - id: cv
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - gcloud secrets versions access latest --secret=ORION_CV_MD --project=$PROJECT_ID > cv.md && test -s cv.md
+
+  # Reuse layers from the previous image (npm ci, Chromium, the embedding
+  # model) so a source-only change does not rebuild them.
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker pull $_IMAGE:latest || true']
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '--cache-from', '$_IMAGE:latest', '-t', '$_IMAGE:$SHORT_SHA', '-t', '$_IMAGE:latest', '.']
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '$_IMAGE']
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ['run', 'jobs', 'update', '$_JOB', '--image=$_IMAGE:$SHORT_SHA', '--region=$_REGION', '--project=$PROJECT_ID']
+
+substitutions:
+  _REGION: us-central1
+  _JOB: orion
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/orion/orion
+
+options:
+  dynamicSubstitutions: true
+  # Required when a trigger runs as a user-managed service account.
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 3600s
