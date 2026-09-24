@@ -174,7 +174,43 @@ async function main() {
     throw new Error(`BigQuery load errors: ${JSON.stringify(errors).slice(0, 500)}`);
   }
   logger.info(`BigQuery load complete: ${datasetId}.${tableId} (${rows.length} rows)`);
+
+  // Daily picks (src/pick.mjs): the history behind the tracking sheet, so what
+  // was recommended when sits next to orion.jobs and the sheet's status marks.
+  const picks = db.prepare(`
+    SELECT p.pick_date, p.job_id, p.rank, p.score, j.title, j.company, j.location, j.url
+    FROM daily_picks p JOIN jobs j ON j.id = p.job_id
+    ORDER BY p.pick_date ASC, p.rank ASC
+  `).all();
+  if (picks.length) {
+    const picksFile = path.join(tmpDir, 'daily_picks.ndjson');
+    writeFileSync(picksFile, picks.map((r) => JSON.stringify({ ...r, exported_at: exportedAt })).join('\n'));
+    const picksTable = process.env.BQ_PICKS_TABLE || 'daily_picks';
+    const [picksJob] = await dataset.table(picksTable).load(picksFile, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON',
+      schema: { fields: PICKS_SCHEMA },
+      writeDisposition: 'WRITE_TRUNCATE',
+      location
+    });
+    const picksErrors = picksJob.status?.errors;
+    if (picksErrors && picksErrors.length) {
+      throw new Error(`BigQuery picks load errors: ${JSON.stringify(picksErrors).slice(0, 500)}`);
+    }
+    logger.info(`BigQuery load complete: ${datasetId}.${picksTable} (${picks.length} rows)`);
+  }
 }
+
+const PICKS_SCHEMA = [
+  { name: 'pick_date', type: 'DATE' },
+  { name: 'job_id', type: 'INTEGER' },
+  { name: 'rank', type: 'INTEGER' },
+  { name: 'score', type: 'FLOAT' },
+  { name: 'title', type: 'STRING' },
+  { name: 'company', type: 'STRING' },
+  { name: 'location', type: 'STRING' },
+  { name: 'url', type: 'STRING' },
+  { name: 'exported_at', type: 'TIMESTAMP' }
+];
 
 main().catch((err) => {
   console.error('[export-bq]', err?.message || err);

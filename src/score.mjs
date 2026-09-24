@@ -91,7 +91,12 @@ async function main() {
 
   const jobs = rows.map((row) => {
     const text = jobText(row);
-    const extraction = row.extraction_status === 'ok' ? safeJsonParse(row.extraction_json) : null;
+    // Any row that parses is usable, not only 'ok'. Since the skill lists come
+    // from the gazetteer rather than the model, a row written during a quota
+    // outage still carries real skills — it is only missing seniority, location
+    // and years, all of which already degrade to title/board-derived fallbacks.
+    // Gating on 'ok' here discarded that and left the job unscored entirely.
+    const extraction = safeJsonParse(row.extraction_json);
     return { ...row, text, textHash: sha1(text), extraction };
   });
 

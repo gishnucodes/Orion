@@ -160,6 +160,102 @@ location:
     - São Paulo
     - Mexico City
     - Armenia
+    # Regions and Latin American countries that leaked into the picks as
+    # "Latin America - Remote", "Santo Domingo", "Peru". Not "San Jose", which is
+    # also a California city.
+    - Latin America
+    - LatAm
+    - South America
+    - Central America
+    - Peru
+    - Lima
+    - Panama
+    - Dominican Republic
+    - Santo Domingo
+    - Costa Rica
+    - Uruguay
+    - Montevideo
+    - Ecuador
+    - Quito
+    - Guatemala
+    - Venezuela
+    - Bolivia
+    - Paraguay
+    - El Salvador
+    - Honduras
+    - Nicaragua
+    - Medellin
+    - Medellín
+    - Guadalajara
+    - Monterrey
+    - Santiago
+    - EU
+    - Africa
+    - Asia
+    # ISO 3166 alpha-3 codes. Some boards write "Aarhus, DNK" or "Toronto, CAN", which
+    # the full names above never matched, and "Remote, KSA" passed as US-remote.
+    # Safe to list: formula.mjs mentions() matches short all-caps tokens
+    # case-sensitively, so CAN never matches the word "can".
+    - CAN
+    - GBR
+    - IRL
+    - DEU
+    - FRA
+    - NLD
+    - ESP
+    - PRT
+    - ITA
+    - POL
+    - CHE
+    - SWE
+    - DNK
+    - NOR
+    - FIN
+    - BEL
+    - AUT
+    - CZE
+    - HUN
+    - ROU
+    - BGR
+    - GRC
+    - SRB
+    - HRV
+    - UKR
+    - EST
+    - LTU
+    - LVA
+    - TUR
+    - CYP
+    - LUX
+    - IND
+    - SGP
+    - JPN
+    - KOR
+    - AUS
+    - NZL
+    - BRA
+    - MEX
+    - ARG
+    - COL
+    - CHL
+    - ISR
+    - ARE
+    - SAU
+    - KSA
+    - CHN
+    - HKG
+    - TWN
+    - PHL
+    - VNM
+    - IDN
+    - MYS
+    - THA
+    - ZAF
+    - NGA
+    - KEN
+    - EGY
+    - PAK
+    - ARM
 
 model:
   # Cloud deployment: Gemini via the Generative Language API. Requires
@@ -191,22 +287,51 @@ model:
     num_predict: 500
 paths:
   db: db/jobs.sqlite
+  # Owned by the local auto-applier (npm run apply); the pipeline only reads it.
+  applications_db: db/applications.sqlite
   raw_dir: raw
   output_dir: output
+# Local auto-applier (src/apply, `npm run apply`). Interactive only — never part
+# of the nightly Cloud Run job. Personal data lives in applicant.yml (gitignored).
+apply:
+  gcs_bucket: orion-hunter-2609100955-state  # jobs.sqlite in, applications.sqlite out
+  chrome_profile: ~/.orion/chrome-profile    # persistent, so manual logins stick
+  max_age_days: 14                           # skip jobs not seen on their board lately
+  answer_model: gemini-3.5-flash             # form answers + memory merges (GEMINI_APPLY_MODEL)
+  cu_model: gemini-3.8-flash                 # Computer Use engine (GEMINI_CU_MODEL)
 extract:
-  max_jobs: 2000
+  # High, because a posting no longer needs the model to be scoreable: past the
+  # daily quota the stage continues with gazetteer skills at ~3ms each. The time
+  # budget below is what actually bounds the stage.
+  max_jobs: 15000
   # Per-page navigation timeout. This was previously `timeout_ms: 21600000`,
   # which was passed straight into page.goto() and let a single hung page stall
   # the whole run for six hours.
   page_timeout_ms: 30000
   # Total wall-clock budget for the stage. On expiry the run stops cleanly and
   # the remaining jobs are picked up by the next run.
-  total_budget_ms: 5400000
+  # 30 min keeps the nightly run inside Cloud Run's free tier (~66 min/night
+  # averaged over a month at 2 vCPU). Unfinished postings carry to the next run.
+  total_budget_ms: 1800000
   concurrency: 4
   per_host_concurrency: 2
   # Characters of page text sent to the model. Trimmed from 12000: the extra
   # context measurably degraded a 0.5B model's JSON adherence.
   input_chars: 6000
+  # Give up on a posting after this many genuine parse failures. Rows recorded
+  # as 'quota' do not count: an outage says nothing about the posting, so those
+  # stay eligible. Without this, a job that can never be parsed was retried
+  # every night forever — 22,118 extraction rows across 5,757 jobs, with the
+  # backlog crowding new postings out of a finite daily quota.
+  max_fallback_attempts: 4
+  # Stop the stage after this many quota rejections. A daily cap does not
+  # recover mid-run, so continuing only burns wall-clock and writes rows that
+  # must be retried anyway.
+  quota_breaker: 25
+  # A skill term must appear in at least this many already-extracted postings to
+  # enter the gazetteer vocabulary; below it, terms are typos or one-off
+  # internal tool names.
+  gazetteer_min_jobs: 3
 scan:
   # Search-based discovery is disabled: the Custom Search JSON API is blocked on
   # this project (the prepaid billing account has no funds, and that API has no
@@ -232,10 +357,34 @@ scan:
   search_max_results: 10
   verify_search_results: true
   verify_min_text: 300
-  concurrency: 4
+  # Boards fetched at once. 16 with ~3,200 boards (portals.discovered.yml); the
+  # per-host caps below still bound load on any single site.
+  concurrency: 16
+  # ATS APIs (Greenhouse, Ashby, Lever, Getro) tolerate more than career sites.
+  api_per_host_concurrency: 8
+  # In-flight posting-body requests across all boards (new postings only).
+  describe_concurrency: 16
   per_host_concurrency: 2
   page_timeout_ms: 30000
+# Daily picks (src/pick.mjs): the best `daily_n` jobs by score among fresh,
+# ungated postings never picked before. Replaces the fixed 65 threshold, which
+# the score distribution (max ~75) almost never cleared.
+picks:
+  daily_n: 50
+  # Floor, not target: below it a posting is noise even on a slow day.
+  min_score: 40
+  max_age_days: 7
+# Tracking Google Sheet (src/sheet.mjs). The id can also come from the SHEET_ID
+# env var. Share the sheet with orion-job@orion-hunter-2609100955.iam.gserviceaccount.com.
+sheet:
+  id: null
+  tab: Picks
+  # Recent pick days the sheet is missing are appended too, so a failed night
+  # is caught up by the next run instead of lost.
+  backfill_days: 7
 notify:
+  # Email digest is replaced by the tracking sheet; the Resend key is also invalid.
+  enabled: false
   # Only push jobs still seen on a board within this many days. Guards against
   # emailing dead links when the database carries older postings.
   max_age_days: 7
@@ -287,18 +436,8 @@ scoring_v2:
           - LLM Engineer
           - Generative AI Engineer
           - GenAI Engineer
-  # Owned by the local auto-applier (npm run apply); the pipeline only reads it.
-  applications_db: db/applications.sqlite
           - Agent Engineer
           - Agentic Engineer
-# Local auto-applier (src/apply, `npm run apply`). Interactive only — never part
-# of the nightly Cloud Run job. Personal data lives in applicant.yml (gitignored).
-apply:
-  gcs_bucket: orion-hunter-2609100955-state  # jobs.sqlite in, applications.sqlite out
-  chrome_profile: ~/.orion/chrome-profile    # persistent, so manual logins stick
-  max_age_days: 14                           # skip jobs not seen on their board lately
-  answer_model: gemini-3.5-flash             # form answers + memory merges (GEMINI_APPLY_MODEL)
-  cu_model: gemini-3.8-flash                 # Computer Use engine (GEMINI_CU_MODEL)
           - AI Platform Engineer
           - ML Platform Engineer
           - MLOps Engineer
@@ -309,6 +448,7 @@ apply:
           - Speech AI
           - Conversational AI
           - RAG Engineer
+          - Inference Engineer
       - weight: 0.75
         patterns:
           - Backend Engineer
@@ -316,6 +456,12 @@ apply:
           - Platform Engineer
           - Distributed Systems Engineer
           - Infrastructure Engineer
+          # Same work, different title; added with the title filter (2026-09).
+          - Member of Technical Staff
+          - Full-Stack Engineer
+          - Full Stack Engineer
+          - Fullstack Engineer
+          - Product Engineer
       - weight: 0.6
         patterns:
           - Forward Deployed Engineer
