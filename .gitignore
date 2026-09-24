@@ -9,3 +9,7 @@ cv.md
 raw-test
 db/test.sqlite
 .cache
+applicant.yml
+applicant-memory.md
+applicant-memory.md.bak
+db/applications.sqlite

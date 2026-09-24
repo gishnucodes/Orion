@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 
 export function openDb(dbPath) {
@@ -61,4 +62,21 @@ export function openDb(dbPath) {
   const jobColumns = db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name);
   if (!jobColumns.includes('description')) db.exec('ALTER TABLE jobs ADD COLUMN description TEXT');
   return db;
+}
+
+/**
+ * Attach the applier's database (src/apply/store.mjs owns its schema) as schema
+ * `apps`, so pipeline queries can read `apps.applications` (job_id, status).
+ * When the file does not exist — no applications yet, or a local run without
+ * it — an empty in-memory stand-in keeps those queries valid.
+ */
+export function attachApplications(db, applicationsDbPath) {
+  if (applicationsDbPath && existsSync(applicationsDbPath)) {
+    db.prepare('ATTACH DATABASE ? AS apps').run(applicationsDbPath);
+    const hasTable = db.prepare("SELECT 1 FROM apps.sqlite_master WHERE type = 'table' AND name = 'applications'").get();
+    if (hasTable) return true;
+    db.exec('DETACH DATABASE apps');
+  }
+  db.exec("ATTACH DATABASE ':memory:' AS apps; CREATE TABLE apps.applications (job_id INTEGER PRIMARY KEY, status TEXT)");
+  return false;
 }

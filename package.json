@@ -11,6 +11,7 @@
     "report": "node --env-file-if-exists=.env src/report.mjs",
     "export-bq": "node --env-file-if-exists=.env src/export-bq.mjs",
     "notify": "node --env-file-if-exists=.env src/notify.mjs",
+    "apply": "node --env-file-if-exists=.env src/apply/index.mjs",
     "run-daily": "node src/run-daily.mjs",
     "dashboard": "node dashboard/server.mjs",
     "test": "node --test test/"

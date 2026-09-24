@@ -1,0 +1,56 @@
+# Applicant profile for the auto-applier (src/apply). Copy to applicant.yml
+# (gitignored) and fill in. Any field left null is treated as UNKNOWN: a form
+# question that needs it makes the agent pause and ask you, and what you enter
+# is learned into applicant-memory.md for next time. Never put passwords here.
+
+name:
+  first: Jane
+  last: Candidate
+  preferred: null          # "Preferred name" fields; null = use first name
+email: jane@example.com
+phone: "+1 555 010 1234"
+location:
+  city: New York
+  state: NY
+  country: United States
+links:
+  linkedin: https://linkedin.com/in/example
+  github: https://github.com/example
+  website: https://example.dev
+
+resume_pdf: /absolute/path/to/resume.pdf
+
+work:
+  current_company: null    # "Current company" fields
+  current_title: null
+
+# Eligibility. true/false, or null to be asked the first time.
+eligibility:
+  authorized_to_work_us: null
+  requires_sponsorship_now: null
+  requires_sponsorship_future: null
+
+logistics:
+  earliest_start: null     # e.g. "Immediately" or "2 weeks notice"
+  willing_to_relocate: null
+  open_to_onsite: null     # in-office / hybrid days
+  salary_expectation: null # e.g. "$150,000–$180,000 base, flexible"
+
+# Voluntary self-identification. "decline" picks the form's
+# "I don't wish to answer" option; any other string is matched to an option.
+eeo:
+  gender: decline
+  race: decline
+  hispanic_latino: decline
+  veteran: decline
+  disability: decline
+
+# Legal acknowledgements / arbitration / "I certify" checkboxes. With false,
+# every such question pauses for you (and is not learned). Set true only if you
+# are fine with the agent ticking them on your behalf.
+consents:
+  auto_accept: false
+
+submit:
+  daily_cap: 10            # max auto-submits per local day
+  never_auto_submit: []    # company names that always pause before submit

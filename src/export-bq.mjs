@@ -22,7 +22,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { BigQuery } from '@google-cloud/bigquery';
 import { loadConfig } from './config.mjs';
-import { openDb } from './db.mjs';
+import { openDb, attachApplications } from './db.mjs';
 import { safeJsonParse } from './utils.mjs';
 import { createLogger } from './logger.mjs';
 
@@ -61,6 +61,8 @@ const SCHEMA = [
   { name: 'matched_keywords', type: 'STRING', mode: 'REPEATED' },
   { name: 'alias_keywords', type: 'STRING', mode: 'REPEATED' },
   { name: 'missing_keywords', type: 'STRING', mode: 'REPEATED' },
+  // From the local applier (applications.sqlite); null = never attempted.
+  { name: 'application_status', type: 'STRING' },
   { name: 'exported_at', type: 'TIMESTAMP' }
 ];
 
@@ -106,6 +108,7 @@ function toRow(r, exportedAt) {
     matched_keywords: arr(b.matched_keywords),
     alias_keywords: arr(b.alias_keywords),
     missing_keywords: arr(b.missing_keywords),
+    application_status: r.application_status || null,
     exported_at: exportedAt
   };
 }
@@ -123,15 +126,18 @@ async function main() {
   const location = process.env.BQ_LOCATION || 'US';
 
   const db = openDb(paths.db);
+  attachApplications(db, paths.applicationsDb);
   const rows = db.prepare(`
     SELECT
       j.id, j.url, j.company, j.title, j.location, j.source, j.first_seen, j.last_seen,
       e.json AS ext_json, e.model AS ext_model, e.status AS ext_status,
       s.score AS score, s.matched AS matched, s.breakdown_json AS breakdown_json,
-      (j.description IS NOT NULL AND length(j.description) >= 200) AS has_description
+      (j.description IS NOT NULL AND length(j.description) >= 200) AS has_description,
+      a.status AS application_status
     FROM jobs j
     LEFT JOIN extractions e ON e.id = (SELECT MAX(id) FROM extractions WHERE job_id = j.id)
     LEFT JOIN scores s ON s.id = (SELECT MAX(id) FROM scores WHERE job_id = j.id)
+    LEFT JOIN apps.applications a ON a.job_id = j.id
     ORDER BY j.id ASC
   `).all();
 

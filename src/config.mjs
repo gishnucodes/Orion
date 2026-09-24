@@ -46,6 +46,8 @@ export function loadConfig() {
     cv,
     paths: {
       db: resolveUnderRepo(repoRoot, config.paths.db, 'db'),
+      // Owned by the local applier (src/apply); the pipeline only reads it.
+      applicationsDb: resolveUnderRepo(repoRoot, config.paths.applications_db || 'db/applications.sqlite', 'applications_db'),
       rawDir: resolveUnderRepo(repoRoot, config.paths.raw_dir, 'raw_dir'),
       outputDir: resolveUnderRepo(repoRoot, config.paths.output_dir, 'output_dir')
     }

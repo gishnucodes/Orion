@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createLogger } from './logger.mjs';
+import { runGemini } from './gemini.mjs';
 
 /**
  * Deliberately small and flat.
@@ -138,70 +139,6 @@ async function runOllama(modelName, params, prompt, options = {}) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Gemini via the Generative Language REST API. This replaces the local
- * qwen/Ollama model for cloud deployment: no model to host, ~1,700 input +
- * ~200 output tokens per job on gemini-2.0-flash-lite. The API key is read from
- * GEMINI_API_KEY (GOOGLE_API_KEY is accepted as a fallback).
- *
- * responseMimeType: 'application/json' makes the model return a bare JSON
- * object with no markdown fence, so extractJsonBlock downstream is a no-op but
- * kept for safety.
- */
-async function runGemini(modelName, params, prompt, options = {}) {
-  const apiKey = options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not set (required for model.runner: gemini)');
-  }
-  const base = (options.url || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
-  const url = `${base}/models/${encodeURIComponent(modelName)}:generateContent`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: params.temp ?? 0,
-      topP: params.top_p ?? 1,
-      topK: params.top_k ?? 1,
-      maxOutputTokens: params.num_predict ?? 300,
-      responseMimeType: 'application/json'
-    }
-  };
-
-  // Retry on rate-limit / transient errors with exponential backoff. The
-  // free-tier Gemini quota is per-minute, and at concurrency > 1 a burst will
-  // draw 429s; without backoff those jobs would fall back to the empty
-  // extraction. 429 and 503 are retried; other statuses fail fast.
-  const maxAttempts = options.maxAttempts ?? 4;
-  let lastErr;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 60000);
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const parts = data.candidates?.[0]?.content?.parts || [];
-        return parts.map((p) => p.text || '').join('');
-      }
-      const text = await res.text();
-      lastErr = new Error(`gemini error ${res.status}: ${text.slice(0, 300)}`);
-      if ((res.status === 429 || res.status === 503) && attempt < maxAttempts) {
-        clearTimeout(timer);
-        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
-        continue;
-      }
-      throw lastErr;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastErr;
 }
 
 /**

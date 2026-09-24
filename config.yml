@@ -287,8 +287,18 @@ scoring_v2:
           - LLM Engineer
           - Generative AI Engineer
           - GenAI Engineer
+  # Owned by the local auto-applier (npm run apply); the pipeline only reads it.
+  applications_db: db/applications.sqlite
           - Agent Engineer
           - Agentic Engineer
+# Local auto-applier (src/apply, `npm run apply`). Interactive only — never part
+# of the nightly Cloud Run job. Personal data lives in applicant.yml (gitignored).
+apply:
+  gcs_bucket: orion-hunter-2609100955-state  # jobs.sqlite in, applications.sqlite out
+  chrome_profile: ~/.orion/chrome-profile    # persistent, so manual logins stick
+  max_age_days: 14                           # skip jobs not seen on their board lately
+  answer_model: gemini-3.5-flash             # form answers + memory merges (GEMINI_APPLY_MODEL)
+  cu_model: gemini-3.8-flash                 # Computer Use engine (GEMINI_CU_MODEL)
           - AI Platform Engineer
           - ML Platform Engineer
           - MLOps Engineer
