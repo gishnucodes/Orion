@@ -1,11 +1,16 @@
 import { chromium } from 'playwright';
 import { loadConfig } from './config.mjs';
 import { openDb } from './db.mjs';
-import { nowIsoDate, pooled, titleAllowed } from './utils.mjs';
+import { nowIsoDate, pooled, titleAllowed, jobKey } from './utils.mjs';
+import { companyFromUrl } from './employer.mjs';
+import { gate } from './scoring/formula.mjs';
 import { writeFileSync } from 'node:fs';
 import { htmlToText, tidyText } from './scoring/text.mjs';
 import path from 'node:path';
 import { createLogger } from './logger.mjs';
+
+// Career-page hosts of boards read through an ATS API (see pooled's per-host cap).
+const API_BOARD_HOST = /(greenhouse\.io|ashbyhq\.com|lever\.co|getro\.com|jobs\.accel\.com|jobs\.generalcatalyst\.com|jobs\.khoslaventures\.com)$/;
 
 function inferPlatform(url) {
   if (url.includes('greenhouse.io')) return 'greenhouse';
@@ -46,11 +51,20 @@ function leverSlug(url) {
   return match ? match[1] : null;
 }
 
+async function fetchGreenhouseDetail(slug, id) {
+  const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs/${id}`);
+  if (!res.ok) return null;
+  const job = await res.json();
+  return htmlToText(job.content) || null;
+}
+
 async function fetchGreenhouseJobs(careersUrl) {
   const slug = greenhouseSlug(careersUrl);
   if (!slug) return [];
-  // content=true adds the posting body, which keyword and semantic scoring need.
-  const apiUrl = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`;
+  // No content=true: across thousands of boards the full bodies are hundreds of
+  // MB a night, nearly all for jobs already stored. The body is fetched per job
+  // (`describe`) only for postings that are new and pass the title filter.
+  const apiUrl = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`;
   const res = await fetch(apiUrl);
   if (!res.ok) return [];
   const data = await res.json();
@@ -58,7 +72,8 @@ async function fetchGreenhouseJobs(careersUrl) {
     url: job.absolute_url,
     title: job.title,
     location: job.location?.name || null,
-    description: htmlToText(job.content) || null,
+    description: null,
+    describe: () => fetchGreenhouseDetail(slug, job.id),
     source: 'greenhouse'
   }));
 }
@@ -185,6 +200,65 @@ async function fetchRecruiteeJobs(careersUrl) {
   })).filter((j) => j.url && j.title);
 }
 
+async function fetchLeverDetail(slug, id) {
+  const res = await fetch(`https://api.lever.co/v0/postings/${slug}/${id}`);
+  if (!res.ok) return null;
+  return leverDescription(await res.json());
+}
+
+/** Load the body of an aggregator's posting straight from its ATS, when the ATS allows it. */
+function describeFromUrl(url) {
+  const gh = url.match(/(?:job-boards|boards)(?:\.eu)?\.greenhouse\.io\/([^/]+)\/jobs\/(\d+)/);
+  if (gh) return () => fetchGreenhouseDetail(gh[1], gh[2]);
+  const lv = url.match(/jobs\.lever\.co\/([^/]+)\/([0-9a-f-]{36})/);
+  if (lv) return () => fetchLeverDetail(lv[1], lv[2]);
+  // Anything else (Workday, career sites) is page-fetched by the extract stage.
+  return null;
+}
+
+/**
+ * Getro powers many VC portfolio boards (Accel, General Catalyst, Khosla…). Its
+ * search API needs `accept: application/json` — without it the API answers 406,
+ * which is why scraping these boards returned nothing. Results come newest
+ * first; paging stops once a page reaches postings older than `max_age_hours`,
+ * so a nightly run reads only the recent slice of a 20,000-job network.
+ */
+async function fetchGetroJobs(careersUrl, company = {}) {
+  const networkId = company.network_id;
+  if (!networkId) return [];
+  const maxAgeSec = (company.max_age_hours ?? 48) * 3600;
+  const maxPages = company.max_pages ?? 60;
+  const now = Date.now() / 1000;
+  const out = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const res = await fetch(`https://api.getro.com/api/v2/collections/${networkId}/search/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'Mozilla/5.0 (orion job scanner)' },
+      body: JSON.stringify({ hitsPerPage: 20, page, filters: '', query: company.query ?? '' })
+    });
+    if (!res.ok) break;
+    const jobs = (await res.json()).results?.jobs || [];
+    if (!jobs.length) break;
+    for (const job of jobs) {
+      if (!job.url || !job.title) continue;
+      if (now - (job.created_at ?? 0) > maxAgeSec) continue;
+      const locations = [...new Set(job.searchable_locations || [])];
+      out.push({
+        url: job.url,
+        title: job.title,
+        location: locations.join('; ') || null,
+        description: null,
+        describe: describeFromUrl(job.url),
+        company: companyFromUrl(job.url, job.organization?.name),
+        source: `getro:${company.name || networkId}`
+      });
+    }
+    const oldest = Math.min(...jobs.map((j) => j.created_at ?? 0));
+    if (now - oldest > maxAgeSec) break;
+  }
+  return out;
+}
+
 // platform -> structured API fetcher. Platforms absent here (e.g. 'workday',
 // 'generic') fall back to scrapeGenericJobs in the scan loop.
 const API_FETCHERS = {
@@ -193,7 +267,8 @@ const API_FETCHERS = {
   ashby: fetchAshbyJobs,
   smartrecruiters: fetchSmartRecruitersJobs,
   workable: fetchWorkableJobs,
-  recruitee: fetchRecruiteeJobs
+  recruitee: fetchRecruiteeJobs,
+  getro: fetchGetroJobs
 };
 
 async function scrapeGenericJobs(browser, careersUrl, logger, timeoutMs = 30000) {
@@ -369,20 +444,27 @@ async function verifySearchResult(browser, url, minText, timeoutMs = 30000) {
   }
 }
 
+/** The stored job for a URL, matched on its identity key so aggregator links dedupe. */
+function findJob(db, url) {
+  return db.prepare('SELECT id FROM jobs WHERE url_key = ? OR url = ?').get(jobKey(url), url);
+}
+
 function upsertJob(db, job, company) {
   const now = nowIsoDate();
-  const existing = db.prepare('SELECT id FROM jobs WHERE url = ?').get(job.url);
+  const existing = findJob(db, job.url);
   if (existing) {
     // Refresh the stored text too: postings get edited, and jobs scanned before
-    // descriptions were captured get backfilled here.
-    db.prepare('UPDATE jobs SET last_seen = ?, description = COALESCE(?, description) WHERE id = ?')
-      .run(now, job.description || null, existing.id);
+    // descriptions were captured get backfilled here. An aggregator may also
+    // know a location the board API left blank.
+    db.prepare(`UPDATE jobs SET last_seen = ?, description = COALESCE(?, description),
+                location = COALESCE(location, ?) WHERE id = ?`)
+      .run(now, job.description || null, job.location || null, existing.id);
     return { id: existing.id, isNew: false };
   }
   const info = db.prepare(`
-    INSERT INTO jobs (url, company, title, location, source, first_seen, last_seen, raw_path, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(job.url, company, job.title, job.location, job.source, now, now, null, job.description || null);
+    INSERT INTO jobs (url, url_key, company, title, location, source, first_seen, last_seen, raw_path, description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(job.url, jobKey(job.url), company, job.title, job.location, job.source, now, now, null, job.description || null);
   return { id: info.lastInsertRowid, isNew: true };
 }
 
@@ -404,13 +486,44 @@ async function main() {
   const titlePositive = portals.title_filter?.positive || [];
   const titleNegative = portals.title_filter?.negative || [];
   const passesTitle = (title) => !titleFilterEnabled || titleAllowed(title, titlePositive, titleNegative);
+  // Location pre-filter, using the scorer's own gate so scan and score agree.
+  // Without it, foreign-only postings (a fifth of aggregator results) were
+  // page-fetched and sent to the model before score.mjs discarded them. Only
+  // an explicitly foreign location is dropped; unknown locations pass.
+  const locationFilterEnabled = config.scan?.filter_by_location !== false;
+  const allowedPlaces = config.location?.allowed || [];
+  const excludedPlaces = config.location?.excluded || [];
+  const foreignOnly = (job) => locationFilterEnabled
+    && gate({ title: job.title, jobLocation: job.location, extraction: null, allowed: allowedPlaces, excluded: excludedPlaces }).gated;
+  const apiPerHost = config.scan?.api_per_host_concurrency ?? 8;
   let newCount = 0;
   let seenCount = 0;
   let skippedTitle = 0;
+  let described = 0;
+  // Cap on in-flight description requests across all boards (see the scan loop).
+  const describeLimit = config.scan?.describe_concurrency ?? 16;
+  let describing = 0;
+  const describeQueue = [];
+  const withDescribeSlot = async (fn) => {
+    while (describing >= describeLimit) await new Promise((resolve) => describeQueue.push(resolve));
+    describing += 1;
+    try {
+      return await fn();
+    } finally {
+      describing -= 1;
+      describeQueue.shift()?.();
+    }
+  };
+  let skippedLocation = 0;
+  const newBySource = {};
 
   // One browser for the whole stage. Company pages and search-result
   // verification each used to launch (and tear down) their own Chromium.
-  const browser = await chromium.launch({ headless: true });
+  // Launched on first use. Most boards are read through ATS APIs and never
+  // need it; launching up front meant a missing or broken Chromium failed the
+  // whole scan, API boards included.
+  let browserPromise = null;
+  const getBrowser = () => (browserPromise ??= chromium.launch({ headless: true }));
 
   try {
     const companyItems = enabledCompanies.map((company) => ({
@@ -428,23 +541,53 @@ async function main() {
       let jobs = [];
       try {
         jobs = fetcher
-          ? await fetcher(careersUrl)
-          : await scrapeGenericJobs(browser, careersUrl, logger, pageTimeoutMs);
+          ? await fetcher(careersUrl, company)
+          : await scrapeGenericJobs(await getBrowser(), careersUrl, logger, pageTimeoutMs);
       } catch (err) {
         logger.warn(`Fetch failed for ${name} (${platform}): ${err?.message || 'error'}`);
         jobs = [];
       }
       logger.info(`Found ${jobs.length} jobs for ${name}`);
 
-      // better-sqlite3 is synchronous and there is no await inside upsertJob,
-      // so these writes stay atomic with respect to the other pool workers.
+      const relevant = [];
       for (const job of jobs) {
-        if (!passesTitle(job.title)) { skippedTitle += 1; continue; }
-        const { isNew } = upsertJob(db, job, name);
-        if (isNew) newCount += 1;
-        else seenCount += 1;
+        if (!passesTitle(job.title)) skippedTitle += 1;
+        else if (foreignOnly(job)) skippedLocation += 1;
+        else relevant.push(job);
       }
-    }, { limit: concurrency, perHost });
+      // Posting bodies only for jobs not stored yet — a few per board per night,
+      // instead of every body on every board. Fetched in parallel under a cap
+      // shared by all boards: a newly added board makes every posting "new",
+      // and one at a time that stalled the scan for most of an hour.
+      await Promise.all(relevant
+        .filter((job) => !job.description && job.describe && !findJob(db, job.url))
+        .map((job) => withDescribeSlot(async () => {
+          try {
+            job.description = await job.describe();
+            described += 1;
+          } catch {
+            // Left null: the extract stage page-fetches postings without a body.
+          }
+        })));
+      // One transaction per board. better-sqlite3 is synchronous, so the block
+      // is atomic with respect to the other pool workers, and thousands of
+      // last_seen updates share a commit instead of paying one each.
+      db.transaction((rows) => {
+        for (const job of rows) {
+          const { isNew } = upsertJob(db, job, job.company || name);
+          if (isNew) {
+            newCount += 1;
+            newBySource[platform] = (newBySource[platform] ?? 0) + 1;
+          } else {
+            seenCount += 1;
+          }
+        }
+      })(relevant);
+    }, {
+      limit: concurrency,
+      // ATS APIs are built for bulk reads; career sites get the cautious cap.
+      perHost: (host) => (API_BOARD_HOST.test(host) ? apiPerHost : perHost)
+    });
 
     if (config.scan?.use_search_queries) {
       const queries = portals.search_queries || [];
@@ -486,7 +629,7 @@ async function main() {
         // stay serial (search providers rate-limit hard) but their results are
         // verified in parallel.
         const verdicts = await pooled(candidates, async ({ result }) => (
-          verify ? verifySearchResult(browser, result.url, minText, pageTimeoutMs) : true
+          verify ? verifySearchResult(await getBrowser(), result.url, minText, pageTimeoutMs) : true
         ), { limit: concurrency, perHost });
 
         candidates.forEach(({ result, parsed }, i) => {
@@ -505,16 +648,19 @@ async function main() {
       }
     }
   } finally {
-    await browser.close().catch(() => {});
+    if (browserPromise) await browserPromise.then((b) => b.close()).catch(() => {});
   }
 
   const durationMs = Date.now() - startedAt;
-  const counts = { new: newCount, existing: seenCount, skipped_title: skippedTitle, companies: enabledCompanies.length };
+  const counts = {
+    new: newCount, existing: seenCount, skipped_title: skippedTitle, skipped_location: skippedLocation, described,
+    new_by_source: newBySource, companies: enabledCompanies.length
+  };
   db.prepare('INSERT INTO runs (run_date, stage, counts_json, duration_ms) VALUES (?, ?, ?, ?)')
     .run(nowIsoDate(), 'scan', JSON.stringify(counts), durationMs);
 
   writeFileSync(path.join(paths.outputDir, 'last-scan.json'), JSON.stringify(counts, null, 2));
-  logger.info(`Scan finished new=${newCount} existing=${seenCount} skipped_title=${skippedTitle} in ${Math.round(durationMs / 1000)}s`);
+  logger.info(`Scan finished new=${newCount} existing=${seenCount} skipped_title=${skippedTitle} skipped_location=${skippedLocation} described=${described} by_source=${JSON.stringify(newBySource)} in ${Math.round(durationMs / 1000)}s`);
   logger.info(`Log file: ${logger.path}`);
   console.log(JSON.stringify(counts, null, 2));
 }

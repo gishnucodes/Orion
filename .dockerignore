@@ -10,6 +10,9 @@ models
 .cache
 .env
 *.log
+# Auto-applier personal data: local only, never baked into the image.
+applicant.yml
+applicant-memory.md*
 .DS_Store
 
 # Stray duplicate downloads (the "name (1).ext" files).

@@ -11,6 +11,7 @@
  *
  * Location and blocked title words are gates (pass/fail), not score components.
  */
+import { negativeHit } from '../utils.mjs';
 import { canon, relatedTo, isGeneric, AMBIGUOUS_TERMS, ONTOLOGY_TERMS } from './ontology.mjs';
 import { normKey, ngramCounts, splitCamelJoins, cleanCv } from './text.mjs';
 
@@ -377,13 +378,18 @@ function classifyPlace(segment, usTokens, excluded) {
   if (US_STATE_CODE.test(segment) || /\b(USA|U\.S\.A?\.?)\b/.test(segment) || usTokens.some((a) => mentions(segment, a))) {
     return { kind: 'us' };
   }
-  if (/\b(remote|north america|amer|americas)\b/i.test(segment)) return { kind: 'us' };
+  // Remote-without-a-country is its own kind. It keeps a posting in play only
+  // when nothing foreign is named: "Paris or remote" and "Toronto; North America"
+  // mean remote *there*, and counting them as US let such jobs into the picks.
+  if (/\b(remote|north america|amer|americas)\b/i.test(segment)) return { kind: 'remote' };
   return { kind: 'unknown' };
 }
 
 export function gate({ title, jobLocation, extraction, negative = [], positive = [], allowed = [], excluded = [] }) {
   const t = (title || '').toLowerCase();
-  const blocked = negative.find((n) => t.includes(n.toLowerCase()));
+  // Same whole-word rule as the scan's title filter, so a title that passed the
+  // scan ("Internal Tools") is not gated here for containing "Intern".
+  const blocked = negativeHit(title, negative);
   if (blocked) return { gated: true, reason: `Title contains "${blocked}"` };
   // Same rule scan applies to new jobs; catches rows ingested before the filter existed.
   if (positive.length && !positive.some((p) => t.includes(p.toLowerCase()))) {

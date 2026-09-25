@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { repoRoot } from './config.mjs';
+import { repoRoot, loadConfig } from './config.mjs';
 
 /**
  * @param {string} step        script name under src/
@@ -28,9 +28,17 @@ function run(step, optional = false) {
   return true;
 }
 
+const { config } = loadConfig();
+
 run('scan');
 run('extract');
 run('score');
+// Today's top picks by score (src/pick.mjs) — the list the tracking sheet shows.
+run('pick');
 run('report');
+// Delivery is optional: an outage there must not fail the run or lose picks.
+// They stay in daily_picks, and sheet.mjs appends every recent date the sheet
+// is missing (datesToAppend), so the next successful run catches up.
+run('sheet', true);
 run('export-bq', true);
-run('notify', true);
+if (config.notify?.enabled !== false) run('notify', true);

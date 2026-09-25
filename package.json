@@ -11,6 +11,7 @@
     "report": "node --env-file-if-exists=.env src/report.mjs",
     "export-bq": "node --env-file-if-exists=.env src/export-bq.mjs",
     "notify": "node --env-file-if-exists=.env src/notify.mjs",
+    "apply": "node --env-file-if-exists=.env src/apply/index.mjs",
     "run-daily": "node src/run-daily.mjs",
     "dashboard": "node dashboard/server.mjs",
     "test": "node --test test/"
@@ -21,6 +22,7 @@
     "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^11.5.0",
     "express": "^4.21.2",
+    "google-auth-library": "^9.15.1",
     "js-yaml": "^4.1.0",
     "playwright": "^1.58.1"
   }

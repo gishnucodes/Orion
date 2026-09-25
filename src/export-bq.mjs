@@ -22,7 +22,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { BigQuery } from '@google-cloud/bigquery';
 import { loadConfig } from './config.mjs';
-import { openDb } from './db.mjs';
+import { openDb, attachApplications } from './db.mjs';
 import { safeJsonParse } from './utils.mjs';
 import { createLogger } from './logger.mjs';
 
@@ -61,6 +61,8 @@ const SCHEMA = [
   { name: 'matched_keywords', type: 'STRING', mode: 'REPEATED' },
   { name: 'alias_keywords', type: 'STRING', mode: 'REPEATED' },
   { name: 'missing_keywords', type: 'STRING', mode: 'REPEATED' },
+  // From the local applier (applications.sqlite); null = never attempted.
+  { name: 'application_status', type: 'STRING' },
   { name: 'exported_at', type: 'TIMESTAMP' }
 ];
 
@@ -106,6 +108,7 @@ function toRow(r, exportedAt) {
     matched_keywords: arr(b.matched_keywords),
     alias_keywords: arr(b.alias_keywords),
     missing_keywords: arr(b.missing_keywords),
+    application_status: r.application_status || null,
     exported_at: exportedAt
   };
 }
@@ -123,15 +126,18 @@ async function main() {
   const location = process.env.BQ_LOCATION || 'US';
 
   const db = openDb(paths.db);
+  attachApplications(db, paths.applicationsDb);
   const rows = db.prepare(`
     SELECT
       j.id, j.url, j.company, j.title, j.location, j.source, j.first_seen, j.last_seen,
       e.json AS ext_json, e.model AS ext_model, e.status AS ext_status,
       s.score AS score, s.matched AS matched, s.breakdown_json AS breakdown_json,
-      (j.description IS NOT NULL AND length(j.description) >= 200) AS has_description
+      (j.description IS NOT NULL AND length(j.description) >= 200) AS has_description,
+      a.status AS application_status
     FROM jobs j
     LEFT JOIN extractions e ON e.id = (SELECT MAX(id) FROM extractions WHERE job_id = j.id)
     LEFT JOIN scores s ON s.id = (SELECT MAX(id) FROM scores WHERE job_id = j.id)
+    LEFT JOIN apps.applications a ON a.job_id = j.id
     ORDER BY j.id ASC
   `).all();
 
@@ -168,7 +174,43 @@ async function main() {
     throw new Error(`BigQuery load errors: ${JSON.stringify(errors).slice(0, 500)}`);
   }
   logger.info(`BigQuery load complete: ${datasetId}.${tableId} (${rows.length} rows)`);
+
+  // Daily picks (src/pick.mjs): the history behind the tracking sheet, so what
+  // was recommended when sits next to orion.jobs and the sheet's status marks.
+  const picks = db.prepare(`
+    SELECT p.pick_date, p.job_id, p.rank, p.score, j.title, j.company, j.location, j.url
+    FROM daily_picks p JOIN jobs j ON j.id = p.job_id
+    ORDER BY p.pick_date ASC, p.rank ASC
+  `).all();
+  if (picks.length) {
+    const picksFile = path.join(tmpDir, 'daily_picks.ndjson');
+    writeFileSync(picksFile, picks.map((r) => JSON.stringify({ ...r, exported_at: exportedAt })).join('\n'));
+    const picksTable = process.env.BQ_PICKS_TABLE || 'daily_picks';
+    const [picksJob] = await dataset.table(picksTable).load(picksFile, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON',
+      schema: { fields: PICKS_SCHEMA },
+      writeDisposition: 'WRITE_TRUNCATE',
+      location
+    });
+    const picksErrors = picksJob.status?.errors;
+    if (picksErrors && picksErrors.length) {
+      throw new Error(`BigQuery picks load errors: ${JSON.stringify(picksErrors).slice(0, 500)}`);
+    }
+    logger.info(`BigQuery load complete: ${datasetId}.${picksTable} (${picks.length} rows)`);
+  }
 }
+
+const PICKS_SCHEMA = [
+  { name: 'pick_date', type: 'DATE' },
+  { name: 'job_id', type: 'INTEGER' },
+  { name: 'rank', type: 'INTEGER' },
+  { name: 'score', type: 'FLOAT' },
+  { name: 'title', type: 'STRING' },
+  { name: 'company', type: 'STRING' },
+  { name: 'location', type: 'STRING' },
+  { name: 'url', type: 'STRING' },
+  { name: 'exported_at', type: 'TIMESTAMP' }
+];
 
 main().catch((err) => {
   console.error('[export-bq]', err?.message || err);

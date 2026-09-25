@@ -40,7 +40,19 @@ title_filter:
     - "Conversational AI"
     - "RAG Engineer"
     - "Research Engineer"
+    # Added 2026-09: common titles for the same work that the list missed —
+    # ~75 "Member of Technical Staff" roles (the default title at AI labs),
+    # plus full-stack, product and inference roles, were rejected unseen.
+    - "Member of Technical Staff"
+    - "Full-Stack Engineer"
+    - "Full Stack Engineer"
+    - "Fullstack Engineer"
+    - "Product Engineer"
+    - "Inference Engineer"
 
+  # Negatives match whole words (utils.mjs titleAllowed). "Ruby" and "Embedded" were
+  # removed: they rejected AI roles such as "Backend Engineer (Ruby), AI Engineering:
+  # Agent Observability" and "Embedded AI Engineer, On-Device Models".
   negative:
     # Low-fit or distracting roles
     - "Junior"
@@ -59,10 +71,8 @@ title_filter:
     - "SDET"
     - ".NET"
     - "PHP"
-    - "Ruby"
     - "iOS"
     - "Android"
-    - "Embedded"
     - "Firmware"
     - "FPGA"
     - "ASIC"
@@ -243,6 +253,8 @@ tracked_companies:
   
   - name: General Catalyst
     careers_url: https://jobs.generalcatalyst.com/jobs
+    platform: getro
+    network_id: 222
     enabled: true
   
   - name: Index Ventures
@@ -255,6 +267,8 @@ tracked_companies:
   
   - name: Accel
     careers_url: https://jobs.accel.com/jobs
+    platform: getro
+    network_id: 8672
     enabled: true
   
   - name: Radical Ventures
@@ -263,6 +277,8 @@ tracked_companies:
   
   - name: Khosla Ventures
     careers_url: https://jobs.khoslaventures.com/jobs
+    platform: getro
+    network_id: 257
     enabled: true
   
   # Frontier / model labs
@@ -279,10 +295,6 @@ tracked_companies:
 
   - name: Cohere
     careers_url: https://jobs.ashbyhq.com/cohere
-    enabled: true
-
-  - name: Mistral AI
-    careers_url: https://jobs.lever.co/mistral
     enabled: true
 
   - name: Perplexity
@@ -323,11 +335,6 @@ tracked_companies:
     enabled: true
 
   # Agentic / workflow / infra / developer tools
-  - name: Temporal
-    careers_url: https://job-boards.greenhouse.io/temporal
-    api: https://boards-api.greenhouse.io/v1/boards/temporal/jobs
-    enabled: true
-
   - name: LangChain
     careers_url: https://jobs.ashbyhq.com/langchain
     enabled: true
@@ -340,11 +347,6 @@ tracked_companies:
   - name: Arize AI
     careers_url: https://job-boards.greenhouse.io/arizeai
     api: https://boards-api.greenhouse.io/v1/boards/arizeai/jobs
-    enabled: true
-
-  - name: RunPod
-    careers_url: https://job-boards.greenhouse.io/runpod
-    api: https://boards-api.greenhouse.io/v1/boards/runpod/jobs
     enabled: true
 
   - name: Pinecone
@@ -400,11 +402,6 @@ tracked_companies:
     api: https://boards-api.greenhouse.io/v1/boards/speechmatics/jobs
     enabled: true
 
-  - name: Runway
-    careers_url: https://job-boards.greenhouse.io/runwayml
-    api: https://boards-api.greenhouse.io/v1/boards/runwayml/jobs
-    enabled: true
-
   - name: 1Password
     careers_url: https://jobs.ashbyhq.com/1password
     platform: ashby
@@ -435,11 +432,6 @@ tracked_companies:
     platform: ashby
     enabled: true
 
-  - name: Airtable
-    careers_url: https://boards.greenhouse.io/airtable
-    platform: greenhouse
-    enabled: true
-
   - name: Airwallex
     careers_url: https://jobs.ashbyhq.com/airwallex
     platform: ashby
@@ -463,11 +455,6 @@ tracked_companies:
   - name: Anchorage
     careers_url: https://jobs.lever.co/anchorage
     platform: lever
-    enabled: true
-
-  - name: Anthropic
-    careers_url: https://boards.greenhouse.io/anthropic
-    platform: greenhouse
     enabled: true
 
   - name: Asana
@@ -835,11 +822,6 @@ tracked_companies:
     platform: greenhouse
     enabled: true
 
-  - name: Hume AI
-    careers_url: https://boards.greenhouse.io/humeai
-    platform: greenhouse
-    enabled: true
-
   - name: Ideogram
     careers_url: https://jobs.ashbyhq.com/ideogram
     platform: ashby
@@ -862,11 +844,6 @@ tracked_companies:
 
   - name: Instacart
     careers_url: https://boards.greenhouse.io/instacart
-    platform: greenhouse
-    enabled: true
-
-  - name: Intercom
-    careers_url: https://boards.greenhouse.io/intercom
     platform: greenhouse
     enabled: true
 
@@ -1100,11 +1077,6 @@ tracked_companies:
     platform: lever
     enabled: true
 
-  - name: Parloa
-    careers_url: https://boards.greenhouse.io/parloa
-    platform: greenhouse
-    enabled: true
-
   - name: Patreon
     careers_url: https://jobs.ashbyhq.com/patreon
     platform: ashby
@@ -1133,16 +1105,6 @@ tracked_companies:
   - name: Plaid
     careers_url: https://jobs.ashbyhq.com/plaid
     platform: ashby
-    enabled: true
-
-  - name: PlanetScale
-    careers_url: https://boards.greenhouse.io/planetscale
-    platform: greenhouse
-    enabled: true
-
-  - name: PolyAI
-    careers_url: https://boards.greenhouse.io/polyai
-    platform: greenhouse
     enabled: true
 
   - name: Polymarket
@@ -1392,11 +1354,6 @@ tracked_companies:
 
   - name: Vectara
     careers_url: https://boards.greenhouse.io/vectara
-    platform: greenhouse
-    enabled: true
-
-  - name: Vercel
-    careers_url: https://boards.greenhouse.io/vercel
     platform: greenhouse
     enabled: true
 

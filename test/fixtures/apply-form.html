@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture application form</title>
+<style>body { font: 14px sans-serif; } .field { margin: 12px 0; } .yesno button[aria-pressed="true"] { background: #cde; }</style>
+</head>
+<body>
+<form id="app" onsubmit="event.preventDefault(); window.__submitted = true;">
+  <div class="field"><label for="first">First Name*</label><input id="first" type="text" required></div>
+  <div class="field"><label for="why">Why us?</label><textarea id="why"></textarea></div>
+  <div class="field"><label for="salary">Salary expectation</label><input id="salary" type="text"></div>
+  <fieldset class="field"><legend>Pick a domain</legend>
+    <label><input type="radio" name="domain" value="fe"> Front End</label>
+    <label><input type="radio" name="domain" value="be"> Back End</label>
+  </fieldset>
+  <div class="field ashby-application-form-field-entry">
+    <label class="ashby-application-form-question-title">Authorized to work?</label>
+    <div class="yesno">
+      <button type="button" aria-pressed="false" onclick="this.parentNode.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', 'false')); this.setAttribute('aria-pressed', 'true')">Yes</button>
+      <button type="button" aria-pressed="false" onclick="this.parentNode.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', 'false')); this.setAttribute('aria-pressed', 'true')">No</button>
+    </div>
+  </div>
+  <div class="field"><label for="country">Country</label>
+    <select id="country"><option value="">Select...</option><option value="us">United States</option><option value="ca">Canada</option></select>
+  </div>
+  <div class="field"><label for="resume">Resume/CV</label><input id="resume" type="file"></div>
+  <button id="submit" type="submit">Submit application</button>
+</form>
+<script>window.__submitted = false;</script>
+</body>
+</html>

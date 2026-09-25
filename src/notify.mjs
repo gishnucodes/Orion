@@ -1,5 +1,5 @@
 import { loadConfig } from './config.mjs';
-import { openDb } from './db.mjs';
+import { openDb, attachApplications } from './db.mjs';
 import { nowIsoDate } from './utils.mjs';
 import { createLogger } from './logger.mjs';
 import { resolveScoringConfig } from './scoring/formula.mjs';
@@ -117,6 +117,8 @@ async function main() {
   const { paths, config } = loadConfig();
   const scoring = resolveScoringConfig(config);
   const db = openDb(paths.db);
+  // Jobs the applier has already handled (submitted or skipped) are not news.
+  attachApplications(db, paths.applicationsDb);
   const logger = createLogger(paths.outputDir, 'notify');
   logger.info('Notify started');
 
@@ -169,6 +171,7 @@ async function main() {
     WHERE s.id IN (SELECT MAX(id) FROM scores GROUP BY job_id)
       AND s.matched = 1
       AND j.id NOT IN (SELECT job_id FROM notified)
+      AND j.id NOT IN (SELECT job_id FROM apps.applications WHERE status IN ('submitted', 'skipped'))
       AND j.last_seen >= ?
     ORDER BY s.score DESC, j.id ASC
     LIMIT ?
