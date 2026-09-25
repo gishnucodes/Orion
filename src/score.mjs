@@ -81,6 +81,8 @@ async function main() {
   const positive = config.scan?.filter_by_title !== false ? portals.title_filter?.positive || [] : [];
   const allowed = config.location?.allowed || [];
   const excluded = config.location?.excluded || [];
+  // Hard eligibility bar: postings requiring US citizenship or a clearance.
+  const excludeCitizenship = config.eligibility?.exclude_citizenship_required === true;
 
   const rows = db.prepare(`
     SELECT j.id, j.title, j.company, j.location, j.last_seen, j.description, j.raw_path,
@@ -114,7 +116,7 @@ async function main() {
 
   const cvProfile = buildCvProfile(cv);
   for (const job of jobs) {
-    job.gate = gate({ title: job.title, jobLocation: job.location, extraction: job.extraction, negative, positive, allowed, excluded });
+    job.gate = gate({ title: job.title, jobLocation: job.location, extraction: job.extraction, negative, positive, allowed, excluded, text: job.text, excludeCitizenship });
   }
 
   let semantic = { sims: new Map(), stats: { cached: 0, embedded: 0, deferred: 0, failed: false } };

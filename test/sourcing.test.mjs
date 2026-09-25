@@ -4,11 +4,11 @@ import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalUrl, jobKey, titleAllowed, JOB_KEY_VERSION } from '../src/utils.mjs';
-import { companyFromUrl } from '../src/employer.mjs';
-import { gate } from '../src/scoring/formula.mjs';
+import { companyFromUrl, isStaffingAgency, prettyName } from '../src/employer.mjs';
+import { gate, requiresCitizenship } from '../src/scoring/formula.mjs';
 import { openDb, attachApplications } from '../src/db.mjs';
 import { selectPicks } from '../src/pick.mjs';
-import { pickRows, HEADER, datesToAppend } from '../src/sheet.mjs';
+import { pickRows, recentPickRows, rowsNotInSheet, HEADER } from '../src/sheet.mjs';
 import { JUNK_BOARD } from '../tools/import-slugs.mjs';
 
 /* ------------------------------------------------------------ identity ---- */
@@ -139,14 +139,19 @@ test('picks skip gated, stale, applied and previously picked jobs', () => {
   assert.deepEqual(today.map((x) => x.job_id), [5]);
 });
 
-test('a second run on the same day picks nothing new', () => {
+test('each run is its own batch; a retry of the same run picks nothing new', () => {
   const { db, addJob } = picksDb();
-  addJob(1, 70);
-  addJob(2, 65);
-  selectPicks(db, { date: '2026-09-24', dailyN: 1, minScore: 40, maxAgeDays: 7 });
-  const again = selectPicks(db, { date: '2026-09-24', dailyN: 1, minScore: 40, maxAgeDays: 7 });
-  assert.equal(again.picked, 0);
-  assert.equal(again.existing, 1);
+  [70, 65, 60].forEach((sc, i) => addJob(i + 1, sc));
+  const opts = { date: '2026-09-25', perRun: 1, minScore: 40, maxAgeDays: 7 };
+  const first = selectPicks(db, { ...opts, batch: 'orion-run-a' });
+  assert.equal(first.picked, 1);
+  // Cloud Run retries share an execution name: same batch, no second set.
+  const retry = selectPicks(db, { ...opts, batch: 'orion-run-a' });
+  assert.deepEqual([retry.picked, retry.existing], [0, 1]);
+  // An on-demand run the same day is a new batch and gets the next job.
+  const onDemand = selectPicks(db, { ...opts, batch: 'orion-run-b' });
+  assert.equal(onDemand.picked, 1);
+  assert.deepEqual(db.prepare('SELECT job_id FROM daily_picks ORDER BY created_at, rank').all().map((r) => r.job_id).sort(), [1, 2]);
 });
 
 test('a role posted once per location is picked once, today and later', () => {
@@ -194,9 +199,65 @@ test('junk boards are dropped without catching real employers', () => {
   }
 });
 
-test('the sheet catches up on days a failed run missed, and never repeats one', () => {
-  const sheet = [['pick_date'], ['2026-09-24'], ['2026-09-24']];
-  assert.deepEqual(datesToAppend(['2026-09-26', '2026-09-24', '2026-09-25'], sheet), ['2026-09-25', '2026-09-26']);
-  assert.deepEqual(datesToAppend(['2026-09-24'], sheet), []);
-  assert.deepEqual(datesToAppend(['2026-09-24'], []), ['2026-09-24']);
+test('the sheet appends picks it does not have yet, by job id, in batch order', () => {
+  const { db, addJob } = picksDb();
+  [80, 70, 60].forEach((sc, i) => addJob(i + 1, sc));
+  selectPicks(db, { date: '2026-09-25', batch: 'a', perRun: 2, minScore: 40, maxAgeDays: 7, now: '2026-09-25T10:00:00Z' });
+  selectPicks(db, { date: '2026-09-25', batch: 'b', perRun: 2, minScore: 40, maxAgeDays: 7, now: '2026-09-25T22:00:00Z' });
+  const rows = recentPickRows(db, '2026-09-20');
+  const idCol = HEADER.indexOf('job_id');
+  assert.deepEqual(rows.map((r) => r[idCol]), [1, 2, 3]);
+  // Job 1 is already in the sheet (e.g. the earlier run succeeded); 2 and 3 are appended.
+  const sheet = [HEADER, rows[0]];
+  assert.deepEqual(rowsNotInSheet(rows, sheet).map((r) => r[idCol]), [2, 3]);
+  assert.deepEqual(rowsNotInSheet(rows, [HEADER, ...rows]), []);
+  assert.equal(rowsNotInSheet(rows, []).length, 3);
+});
+
+/* ---------------------------------------------------------- eligibility ---- */
+
+test('citizenship and clearance requirements are recognised as written in real postings', () => {
+  for (const text of [
+    'ITAR Requirements: To conform to U.S. Government export regulations, applicant must be a (i) U.S. citizen',
+    'U.S. Citizen and eligible for DoD Secret or TS/SCI clearance',
+    'access to export-controlled information or items that require \u201cU.S. Person\u201d status',
+    'Ability to obtain and maintain a U.S. Government security clearance.',
+    'Requires an active TS/SCI with a polygraph. You must be a US citizen for consideration.',
+    'Must be a U.S.A. citizen'
+  ]) assert.ok(requiresCitizenship(text), text);
+});
+
+test('mentions of export control, security or citizens are not requirements', () => {
+  for (const text of [
+    'We work with export-controlled customers.',
+    'Applicant must be a strong communicator.',
+    'Visa sponsorship available.',
+    'You will secure our clearance house APIs',
+    'US-based remote role; citizens and permanent residents welcome',
+    'Our U.S. team maintains high security. Clearance of backlog is a priority.'
+  ]) assert.ok(!requiresCitizenship(text), text);
+});
+
+test('the citizenship gate applies only when switched on', () => {
+  const job = { title: 'Software Engineer', jobLocation: 'Hawthorne, CA', extraction: null, allowed: ['US'], excluded: [],
+    text: 'ITAR Requirements: applicant must be a U.S. citizen' };
+  assert.equal(gate({ ...job, excludeCitizenship: true }).reason, 'Requires US citizenship or security clearance');
+  assert.equal(gate(job).gated, false);
+});
+
+test('staffing agencies and job boards are recognised, real employers are not', () => {
+  for (const n of ['Collabera', 'krg technology inc', 'Procom Services', 'Huzzle', 'Ginas Tech Jobs', 'Flatgigs',
+    'Next Step Systems', 'Attain Talent', 'LinkedIn Job Wrapping', 'Third-Party Job Posts', 'DICE']) {
+    assert.ok(isStaffingAgency(n), n);
+  }
+  for (const n of ['ZipRecruiter', 'Rubrik Job Board', 'Nextdoor, Inc.', 'DataVisor', 'RunSybil', 'nextdoor-jobs',
+    'ServiceNow', 'LinkedIn', 'Talentsoft', 'Sony Music Global Job Board']) {
+    assert.ok(!isStaffingAgency(n), n);
+  }
+});
+
+test('slug-only company names are tidied, real names kept', () => {
+  assert.equal(prettyName('coperniq'), 'Coperniq');
+  assert.equal(prettyName('red-hat'), 'Red Hat');
+  assert.equal(prettyName('ATOMS Careers page'), 'ATOMS Careers page');
 });

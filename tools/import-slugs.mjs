@@ -3,10 +3,12 @@
  * One-off: grow the board list from a public slug index, keeping only boards
  * that are live and relevant right now.
  *
- *   node tools/import-slugs.mjs [--max 3000] [--concurrency 16]
+ *   node tools/import-slugs.mjs [--max 10000] [--concurrency 16]
  *
- * Source: kalil0321/ats-scrapers (MIT) — company slugs harvested for
- * Greenhouse, Ashby and Lever. A slug index is not a board list: boards close,
+ * Sources, both MIT-licensed: kalil0321/ats-scrapers (Greenhouse, Ashby, Lever,
+ * SmartRecruiters, Workable, Recruitee) and Feashliaa/job-board-aggregator (a
+ * larger Greenhouse/Ashby/Lever index). Slugs are merged and deduped per
+ * platform. A slug index is not a board list: boards close,
  * rename, or never post relevant roles. So every slug is checked against its
  * live ATS API, and kept only if it has at least one posting that passes the
  * same title filter and US location gate the nightly scan applies.
@@ -20,18 +22,25 @@ import yaml from 'js-yaml';
 import { repoRoot } from '../src/config.mjs';
 import { titleAllowed, pooled } from '../src/utils.mjs';
 import { gate } from '../src/scoring/formula.mjs';
+import { isStaffingAgency, prettyName } from '../src/employer.mjs';
 
-const SOURCES = {
-  greenhouse: 'https://raw.githubusercontent.com/kalil0321/ats-scrapers/main/ats-companies/greenhouse.csv',
-  ashby: 'https://raw.githubusercontent.com/kalil0321/ats-scrapers/main/ats-companies/ashby.csv',
-  lever: 'https://raw.githubusercontent.com/kalil0321/ats-scrapers/main/ats-companies/lever.csv'
-};
+const KALIL = 'https://raw.githubusercontent.com/kalil0321/ats-scrapers/main/ats-companies';
+const FEASHLIAA = 'https://raw.githubusercontent.com/Feashliaa/job-board-aggregator/main/data';
+
+/** Slug lists: CSV rows of name,slug,url or a JSON array of slugs. */
+const SOURCES = [
+  ...['greenhouse', 'ashby', 'lever', 'smartrecruiters', 'workable', 'recruitee']
+    .map((platform) => ({ platform, format: 'csv', url: `${KALIL}/${platform}.csv` })),
+  ...['greenhouse', 'ashby', 'lever']
+    .map((platform) => ({ platform, format: 'json', url: `${FEASHLIAA}/${platform}_companies.json` }))
+];
+export const PLATFORMS = ['greenhouse', 'ashby', 'lever', 'smartrecruiters', 'workable', 'recruitee'];
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 ? process.argv[i + 1] : fallback;
 };
-const MAX = Number(arg('max', 3000));
+const MAX = Number(arg('max', 10000));
 const CONCURRENCY = Number(arg('concurrency', 16));
 
 /** Minimal CSV row parser: quoted fields may contain commas. */
@@ -66,6 +75,35 @@ async function listJobs(platform, slug) {
     if (!res.ok) return null;
     return ((await res.json()).jobs || []).map((j) => ({ title: j.title, location: j.location || j.locationName }));
   }
+  if (platform === 'smartrecruiters') {
+    const res = await fetch(`https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=100`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data.content)) return null;
+    return data.content.map((j) => ({
+      title: j.name,
+      // fullLocation spells the country out ("Newark, NJ, United States"); the
+      // bare country field is a lowercase ISO-2 code the location gate can't read.
+      location: j.location?.fullLocation || (j.location?.remote ? 'Remote' : null)
+    }));
+  }
+  if (platform === 'workable') {
+    const res = await fetch(`https://apply.workable.com/api/v1/widget/accounts/${slug}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data.jobs)) return null;
+    return data.jobs.map((j) => ({
+      title: j.title,
+      location: [j.city, j.state, j.country].filter(Boolean).join(', ') || (j.telecommuting ? 'Remote' : null)
+    }));
+  }
+  if (platform === 'recruitee') {
+    const res = await fetch(`https://${slug}.recruitee.com/api/offers/`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data.offers)) return null;
+    return data.offers.map((j) => ({ title: j.title, location: j.location || [j.city, j.country].filter(Boolean).join(', ') || (j.remote ? 'Remote' : null) }));
+  }
   const res = await fetch(`https://api.lever.co/v0/postings/${slug}?mode=json`);
   if (!res.ok) return null;
   const data = await res.json();
@@ -85,7 +123,11 @@ export const JUNK_BOARD = /(^test\d*$|test$|sandbox$|demo$|private$|hidden(event
 const careersUrl = {
   greenhouse: (s) => `https://job-boards.greenhouse.io/${s}`,
   ashby: (s) => `https://jobs.ashbyhq.com/${s}`,
-  lever: (s) => `https://jobs.lever.co/${s}`
+  lever: (s) => `https://jobs.lever.co/${s}`,
+  // These forms are what scan.mjs's smartRecruitersSlug/workableSlug/recruiteeSlug parse.
+  smartrecruiters: (s) => `https://careers.smartrecruiters.com/${s}`,
+  workable: (s) => `https://apply.workable.com/${s}`,
+  recruitee: (s) => `https://${s}.recruitee.com`
 };
 
 async function main() {
@@ -97,19 +139,32 @@ async function main() {
   const excluded = config.location?.excluded || [];
 
   // Boards already curated are skipped — the curated entry wins.
-  const slugOf = (u) => (u || '').match(/(?:greenhouse\.io|ashbyhq\.com|lever\.co)\/([^/?#]+)/i)?.[1]?.toLowerCase();
+  const slugOf = (u) => {
+    const s = String(u || '');
+    return (s.match(/(?:greenhouse\.io|ashbyhq\.com|lever\.co|smartrecruiters\.com|apply\.workable\.com)\/([^/?#]+)/i)?.[1]
+      ?? s.match(/https?:\/\/([^.]+)\.(?:recruitee|workable)\.com/i)?.[1])?.toLowerCase();
+  };
   const curated = new Set((portals.tracked_companies || []).map((c) => slugOf(c.careers_url)).filter(Boolean));
 
   const candidates = [];
-  for (const [platform, url] of Object.entries(SOURCES)) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`fetch ${platform} slug list: HTTP ${res.status}`);
-    const rows = parseCsv(await res.text());
+  const seen = new Set();
+  for (const src of SOURCES) {
+    const res = await fetch(src.url);
+    if (!res.ok) throw new Error(`fetch ${src.platform} slug list (${src.url}): HTTP ${res.status}`);
+    const text = await res.text();
+    const rows = src.format === 'csv'
+      ? parseCsv(text)
+      : JSON.parse(text).map((x) => ({ name: null, slug: String(typeof x === 'string' ? x : x.slug ?? '').trim() })).filter((r) => r.slug);
+    let added = 0;
     for (const r of rows) {
-      if (curated.has(r.slug.toLowerCase()) || JUNK_BOARD.test(r.slug)) continue;
-      candidates.push({ ...r, platform, url: careersUrl[platform](r.slug) });
+      const key = `${src.platform}:${r.slug.toLowerCase()}`;
+      if (seen.has(key) || curated.has(r.slug.toLowerCase()) || JUNK_BOARD.test(r.slug)) continue;
+      if (isStaffingAgency(r.name) || isStaffingAgency(r.slug)) continue;
+      seen.add(key);
+      candidates.push({ ...r, platform: src.platform, url: careersUrl[src.platform](r.slug) });
+      added += 1;
     }
-    console.log(`${platform}: ${rows.length} slugs`);
+    console.log(`${src.platform.padEnd(15)} ${src.format}: ${rows.length} slugs, ${added} new`);
   }
   console.log(`checking ${candidates.length} boards (concurrency ${CONCURRENCY})...`);
 
@@ -129,7 +184,7 @@ async function main() {
   const live = checked.filter((r) => r.live);
   const keep = live.filter((r) => r.relevant > 0).sort((a, b) => b.relevant - a.relevant).slice(0, MAX);
 
-  const byPlatform = (list) => Object.fromEntries(['greenhouse', 'ashby', 'lever']
+  const byPlatform = (list) => Object.fromEntries(PLATFORMS
     .map((p) => [p, list.filter((r) => r.platform === p).length]));
   console.log(`\nlive boards: ${live.length} of ${checked.length}  ${JSON.stringify(byPlatform(live))}`);
   console.log(`with >=1 US title-relevant posting: ${live.filter((r) => r.relevant > 0).length}`);
@@ -139,13 +194,14 @@ async function main() {
   const header = [
     '# Boards discovered by tools/import-slugs.mjs — do not edit by hand; re-run the tool.',
     `# Generated ${new Date().toISOString().slice(0, 10)} from kalil0321/ats-scrapers (MIT License,`,
-    '# Copyright (c) 2026 Kalil Bouzigues). Each board had >=1 live US, title-relevant',
+    '# Copyright (c) 2026 Kalil Bouzigues) and Feashliaa/job-board-aggregator (MIT License,',
+    '# Copyright (c) 2026 Riley Dorrington). Each board had >=1 live US, title-relevant',
     '# posting when checked. Merged after portals.yml by src/config.mjs.',
     ''
   ].join('\n');
   const doc = {
     tracked_companies: keep.map((r) => ({
-      name: r.name || r.slug,
+      name: prettyName(r.name || r.slug),
       careers_url: r.url,
       platform: r.platform,
       enabled: true

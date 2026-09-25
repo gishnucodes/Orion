@@ -192,6 +192,28 @@ location:
     - EU
     - Africa
     - Asia
+    # Country names as European ATSs write them (Workable, Recruitee): a job in
+    # "Czechia" reached the picks because only "Czech Republic" was listed.
+    - Czechia
+    - Nederland
+    - Deutschland
+    - España
+    - México
+    - Brasil
+    - Polska
+    - Italia
+    - Österreich
+    - Schweiz
+    - Suisse
+    - Sverige
+    - Danmark
+    - Norge
+    - Suomi
+    - Belgique
+    - België
+    - Türkiye
+    - Magyarország
+    - România
     # ISO 3166 alpha-3 codes. Some boards write "Aarhus, DNK" or "Toronto, CAN", which
     # the full names above never matched, and "Remote, KSA" passed as US-remote.
     # Safe to list: formula.mjs mentions() matches short all-caps tokens
@@ -256,6 +278,14 @@ location:
     - EGY
     - PAK
     - ARM
+
+# Hard eligibility bars, applied as gates at scan and score time.
+eligibility:
+  # Drop postings that require US citizenship, "U.S. person" status (ITAR /
+  # export control) or a security clearance. Every job marked "US Citizen" in
+  # the tracking sheet stated one of these; they are ~10% of the pool (SpaceX,
+  # Palantir, Anduril, ...). Pattern: formula.mjs CITIZENSHIP_REQUIRED.
+  exclude_citizenship_required: true
 
 model:
   # Cloud deployment: Gemini via the Generative Language API. Requires
@@ -366,11 +396,12 @@ scan:
   describe_concurrency: 16
   per_host_concurrency: 2
   page_timeout_ms: 30000
-# Daily picks (src/pick.mjs): the best `daily_n` jobs by score among fresh,
-# ungated postings never picked before. Replaces the fixed 65 threshold, which
-# the score distribution (max ~75) almost never cleared.
+# Picks (src/pick.mjs): each pipeline run adds the best `per_run` jobs by score
+# among fresh, ungated postings never picked before — the nightly schedule adds
+# one batch, and so does every run you trigger on demand. Replaces the fixed 65
+# threshold, which the score distribution (max ~75) almost never cleared.
 picks:
-  daily_n: 50
+  per_run: 100
   # Floor, not target: below it a posting is noise even on a slow day.
   min_score: 40
   max_age_days: 7

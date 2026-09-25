@@ -20,30 +20,39 @@ export const HEADER = [
   'pick_date', 'rank', 'score', 'title', 'company', 'location', 'url',
   'matched_skills', 'job_id', 'status', 'notes'
 ];
-export const STATUSES = ['Applied', 'Skipped', 'Interview', 'Rejected', 'Offer'];
+// Offered by the Status dropdown. "Not available" (posting closed) and
+// "Ineligible" (e.g. citizenship required) are the two you had to type by hand
+// before the dropdown worked. Free text is still accepted; src/tracker.mjs
+// normalises it.
+export const STATUSES = ['Applied', 'Skipped', 'Interview', 'Rejected', 'Offer', 'Not available', 'Ineligible'];
 
-/** One day's picks as sheet rows, best first. Status and notes are left for you. */
-export function pickRows(db, date) {
-  const rows = db.prepare(`
+const PICK_SELECT = `
     SELECT p.pick_date, p.rank, p.score, j.id AS job_id, j.title, j.company, j.location, j.url,
            s.breakdown_json
     FROM daily_picks p
     JOIN jobs j ON j.id = p.job_id
-    LEFT JOIN scores s ON s.id = (SELECT MAX(id) FROM scores WHERE job_id = j.id)
-    WHERE p.pick_date = ?
-    ORDER BY p.rank ASC
-  `).all(date);
-  return rows.map((r) => {
-    let matched = [];
-    try {
-      const b = JSON.parse(r.breakdown_json || '{}');
-      matched = [...(b.skills_detail?.matched_required || []), ...(b.matched_keywords || [])];
-    } catch { /* unscored row: leave the column empty */ }
-    return [
-      r.pick_date, r.rank, r.score, clean(r.title), r.company || '', clean(r.location),
-      r.url, [...new Set(matched)].slice(0, 8).join(', '), r.job_id, '', ''
-    ];
-  });
+    LEFT JOIN scores s ON s.id = (SELECT MAX(id) FROM scores WHERE job_id = j.id)`;
+
+function toSheetRow(r) {
+  let matched = [];
+  try {
+    const b = JSON.parse(r.breakdown_json || '{}');
+    matched = [...(b.skills_detail?.matched_required || []), ...(b.matched_keywords || [])];
+  } catch { /* unscored row: leave the column empty */ }
+  return [
+    r.pick_date, r.rank, r.score, clean(r.title), r.company || '', clean(r.location),
+    r.url, [...new Set(matched)].slice(0, 8).join(', '), r.job_id, '', ''
+  ];
+}
+
+/** One day's picks as sheet rows, best first. Status and notes are left for you. */
+export function pickRows(db, date) {
+  return db.prepare(`${PICK_SELECT} WHERE p.pick_date = ? ORDER BY p.created_at ASC, p.rank ASC`).all(date).map(toSheetRow);
+}
+
+/** Every pick since `sinceDate`, oldest batch first and best first within a batch. */
+export function recentPickRows(db, sinceDate) {
+  return db.prepare(`${PICK_SELECT} WHERE p.pick_date >= ? ORDER BY p.created_at ASC, p.rank ASC`).all(sinceDate).map(toSheetRow);
 }
 
 /** Scraped titles can carry newlines and runs of spaces that break a cell. */
@@ -51,23 +60,54 @@ function clean(text) {
   return String(text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-const API = 'https://sheets.googleapis.com/v4/spreadsheets';
+export const API = 'https://sheets.googleapis.com/v4/spreadsheets';
+
+/** Authenticated Sheets caller: the job's service account on Cloud Run, your ADC locally. */
+export async function sheetsClient(scopes = ['https://www.googleapis.com/auth/spreadsheets']) {
+  const client = await new GoogleAuth({ scopes }).getClient();
+  return async (url, method = 'GET', data) => (await client.request({ url, method, data })).data;
+}
 
 /**
- * Pick dates stored locally but missing from the sheet, oldest first.
+ * Put the Status dropdown on every row below the header.
  *
- * The sheet stage is optional in run-daily, so it can fail on a given night
- * (an outage, a revoked share). Appending every missing date rather than only
- * today's means the next successful run catches up instead of losing a day.
+ * Re-applied after each append. Applying it once at setup was the bug: the
+ * dropdown sat on empty rows 2..1000, then appending *inserted* the picks above
+ * them, so no pick row ever had one. Setting validation on a range that already
+ * has it simply replaces it, so this is safe to repeat.
  */
-export function datesToAppend(pickDates, sheetFirstColumn) {
-  const present = new Set((sheetFirstColumn || []).map(([v]) => v));
-  return [...new Set(pickDates)].filter((d) => !present.has(d)).sort();
+async function applyStatusDropdown(call, sheetId, grid) {
+  const statusCol = HEADER.indexOf('status');
+  await call(`${API}/${sheetId}:batchUpdate`, 'POST', {
+    requests: [{
+      setDataValidation: {
+        range: { sheetId: grid.sheetId, startRowIndex: 1, startColumnIndex: statusCol, endColumnIndex: statusCol + 1 },
+        rule: {
+          condition: { type: 'ONE_OF_LIST', values: STATUSES.map((v) => ({ userEnteredValue: v })) },
+          showCustomUi: true,
+          strict: false
+        }
+      }
+    }]
+  });
+}
+
+/**
+ * Pick rows whose job is not in the sheet yet, in order.
+ *
+ * Keyed on job_id, not date: several runs can add batches on the same day (the
+ * schedule plus any you trigger), and the sheet stage is optional, so a run it
+ * failed on is caught up by the next one instead of lost.
+ */
+export function rowsNotInSheet(pickRowsList, sheetValues) {
+  const col = HEADER.indexOf('job_id');
+  const present = new Set((sheetValues || []).slice(1).map((r) => String(r[col] ?? '').trim()).filter(Boolean));
+  return pickRowsList.filter((r) => !present.has(String(r[col])));
 }
 
 /**
  * Make the tab ready: create it if missing, and on an empty tab write the
- * header, the Status dropdown and a frozen header row. Returns column A.
+ * header and freeze it. Returns the tab's rows (header first) and its grid properties.
  */
 async function ensureSheet(call, sheetId, tab, logger) {
   const range = (r) => encodeURIComponent(`'${tab}'!${r}`);
@@ -78,29 +118,16 @@ async function ensureSheet(call, sheetId, tab, logger) {
     grid = res.replies[0].addSheet.properties;
     logger.info(`Created tab "${tab}"`);
   }
-  let firstCol = (await call(`${API}/${sheetId}/values/${range('A:A')}`)).values || [];
-  if (firstCol.length === 0) {
+  let values = (await call(`${API}/${sheetId}/values/${range('A:K')}`)).values || [];
+  if (values.length === 0) {
     await call(`${API}/${sheetId}/values/${range('A1')}?valueInputOption=RAW`, 'PUT', { values: [HEADER] });
-    const statusCol = HEADER.indexOf('status');
     await call(`${API}/${sheetId}:batchUpdate`, 'POST', {
-      requests: [
-        {
-          setDataValidation: {
-            range: { sheetId: grid.sheetId, startRowIndex: 1, startColumnIndex: statusCol, endColumnIndex: statusCol + 1 },
-            rule: {
-              condition: { type: 'ONE_OF_LIST', values: STATUSES.map((v) => ({ userEnteredValue: v })) },
-              showCustomUi: true,
-              strict: false
-            }
-          }
-        },
-        { updateSheetProperties: { properties: { sheetId: grid.sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } }
-      ]
+      requests: [{ updateSheetProperties: { properties: { sheetId: grid.sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } }]
     });
-    logger.info(`Wrote header and Status dropdown to "${tab}"`);
-    firstCol = [[HEADER[0]]];
+    logger.info(`Wrote header to "${tab}"`);
+    values = [HEADER];
   }
-  return { title: meta.properties?.title, firstCol };
+  return { title: meta.properties?.title, values, grid };
 }
 
 async function main() {
@@ -117,35 +144,34 @@ async function main() {
   }
   const tab = config.sheet?.tab || 'Picks';
 
-  // Service-account credentials on Cloud Run, your gcloud ADC locally.
-  const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-  const client = await auth.getClient();
-  const call = async (url, method = 'GET', data) => (await client.request({ url, method, data })).data;
+  const call = await sheetsClient();
   const range = (r) => encodeURIComponent(`'${tab}'!${r}`);
 
-  const { title, firstCol } = await ensureSheet(call, sheetId, tab, logger);
+  const { title, values, grid } = await ensureSheet(call, sheetId, tab, logger);
   if (checkOnly) {
-    logger.info(`Sheet "${title}" is reachable; tab "${tab}" ready with ${Math.max(0, firstCol.length - 1)} data rows`);
+    // Also repairs the dropdown on rows appended before it was re-applied.
+    await applyStatusDropdown(call, sheetId, grid);
+    logger.info(`Sheet "${title}" is reachable; tab "${tab}" ready with ${Math.max(0, values.length - 1)} data rows; Status dropdown applied`);
     return;
   }
 
-  // Catch up on any recent day the sheet missed, not only today.
+  // Every recent pick not in the sheet yet: this run's batch, plus any a
+  // failed earlier run left behind.
   const backfillDays = config.sheet?.backfill_days ?? 7;
   const since = new Date(Date.now() - backfillDays * 86400000).toISOString().slice(0, 10);
   const db = openDb(paths.db);
-  const pickDates = db.prepare('SELECT DISTINCT pick_date FROM daily_picks WHERE pick_date >= ?').all(since).map((r) => r.pick_date);
-  const missing = datesToAppend(pickDates, firstCol);
-  if (!missing.length) {
+  const rows = rowsNotInSheet(recentPickRows(db, since), values);
+  if (!rows.length) {
     logger.info(`Sheet is up to date through ${nowIsoDate()}; nothing to append`);
     return;
   }
-  const rows = missing.flatMap((d) => pickRows(db, d));
   await call(
     `${API}/${sheetId}/values/${range('A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     'POST',
     { values: rows }
   );
-  logger.info(`Appended ${rows.length} picks for ${missing.join(', ')} to "${tab}"`);
+  await applyStatusDropdown(call, sheetId, grid);
+  logger.info(`Appended ${rows.length} picks to "${tab}"`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

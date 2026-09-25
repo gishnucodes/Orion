@@ -45,3 +45,33 @@ export function companyFromUrl(url, fallback) {
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
+
+/**
+ * Recruiting agencies, staffing firms and job boards that post other
+ * companies' roles under their own name. They surfaced once boards from
+ * SmartRecruiters and Workable were imported (Collabera, KRG Technology,
+ * Procom, "Ginas Tech Jobs"…); applying through them is not applying to the
+ * employer. Matched on the company name or board slug.
+ */
+const STAFFING = new RegExp([
+  // Generic words, but not an employer's own board ("Rubrik Job Board",
+  // slug "nextdoor-jobs") and not ZipRecruiter, which hires engineers itself.
+  'staffing', '(?<!zip)recruit', 'talent(?!soft)', 'headhunt', 'placement',
+  // Job boards and feeds seen posing as employers.
+  'tech jobs', 'job sauce', 'third-party job', 'job wrapping', 'invite-only job', '^jobs?$', '^job board$', 'flatgigs',
+  // Named IT staffing firms.
+  'resources? network', 'consultants group', 'procom', 'collabera', 'krg ?technolog', 'teksystems',
+  'randstad', 'insight ?global', 'apex ?systems', 'robert ?half', 'kforce', 'cybercoders', 'jobot',
+  'motion ?recruitment', 'huzzle', 'next ?step ?systems', '^usm$', 'hire ?quest', '^dice$'
+].join('|'), 'i');
+
+export function isStaffingAgency(name) {
+  return STAFFING.test(String(name || '').trim());
+}
+
+/** "coperniq" -> "Coperniq", "red-hat" -> "Red Hat"; names that already have capitals are kept. */
+export function prettyName(name) {
+  const s = String(name || '').trim();
+  if (!s || s !== s.toLowerCase()) return s;
+  return s.split(/[-_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
