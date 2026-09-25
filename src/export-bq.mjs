@@ -133,11 +133,13 @@ async function main() {
       e.json AS ext_json, e.model AS ext_model, e.status AS ext_status,
       s.score AS score, s.matched AS matched, s.breakdown_json AS breakdown_json,
       (j.description IS NOT NULL AND length(j.description) >= 200) AS has_description,
-      a.status AS application_status
+      -- The applier's own record wins; otherwise what you marked in the sheet.
+      COALESCE(a.status, t.status) AS application_status
     FROM jobs j
     LEFT JOIN extractions e ON e.id = (SELECT MAX(id) FROM extractions WHERE job_id = j.id)
     LEFT JOIN scores s ON s.id = (SELECT MAX(id) FROM scores WHERE job_id = j.id)
     LEFT JOIN apps.applications a ON a.job_id = j.id
+    LEFT JOIN tracker_status t ON t.job_id = j.id
     ORDER BY j.id ASC
   `).all();
 
@@ -178,9 +180,9 @@ async function main() {
   // Daily picks (src/pick.mjs): the history behind the tracking sheet, so what
   // was recommended when sits next to orion.jobs and the sheet's status marks.
   const picks = db.prepare(`
-    SELECT p.pick_date, p.job_id, p.rank, p.score, j.title, j.company, j.location, j.url
+    SELECT p.pick_date, p.batch, p.created_at, p.job_id, p.rank, p.score, j.title, j.company, j.location, j.url
     FROM daily_picks p JOIN jobs j ON j.id = p.job_id
-    ORDER BY p.pick_date ASC, p.rank ASC
+    ORDER BY p.created_at ASC, p.rank ASC
   `).all();
   if (picks.length) {
     const picksFile = path.join(tmpDir, 'daily_picks.ndjson');
@@ -198,10 +200,51 @@ async function main() {
     }
     logger.info(`BigQuery load complete: ${datasetId}.${picksTable} (${picks.length} rows)`);
   }
+
+  // Your sheet statuses as a native table. Unlike orion.picks_tracker (a live
+  // view of the sheet), querying this needs no Google Drive consent.
+  const marks = db.prepare(`
+    SELECT t.job_id, t.status, t.raw_status, t.notes, t.pick_date, t.first_seen_at, t.updated_at,
+           j.company, j.title, j.url
+    FROM tracker_status t JOIN jobs j ON j.id = t.job_id
+    ORDER BY t.updated_at ASC
+  `).all();
+  if (marks.length) {
+    const marksFile = path.join(tmpDir, 'tracker_status.ndjson');
+    writeFileSync(marksFile, marks.map((r) => JSON.stringify({ ...r, exported_at: exportedAt })).join('\n'));
+    const [marksJob] = await dataset.table('tracker_status').load(marksFile, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON',
+      schema: { fields: TRACKER_SCHEMA },
+      writeDisposition: 'WRITE_TRUNCATE',
+      location
+    });
+    const marksErrors = marksJob.status?.errors;
+    if (marksErrors && marksErrors.length) {
+      throw new Error(`BigQuery tracker load errors: ${JSON.stringify(marksErrors).slice(0, 500)}`);
+    }
+    logger.info(`BigQuery load complete: ${datasetId}.tracker_status (${marks.length} rows)`);
+  }
 }
+
+const TRACKER_SCHEMA = [
+  { name: 'job_id', type: 'INTEGER' },
+  { name: 'status', type: 'STRING' },
+  { name: 'raw_status', type: 'STRING' },
+  { name: 'notes', type: 'STRING' },
+  { name: 'pick_date', type: 'DATE' },
+  { name: 'first_seen_at', type: 'TIMESTAMP' },
+  { name: 'updated_at', type: 'TIMESTAMP' },
+  { name: 'company', type: 'STRING' },
+  { name: 'title', type: 'STRING' },
+  { name: 'url', type: 'STRING' },
+  { name: 'exported_at', type: 'TIMESTAMP' }
+];
 
 const PICKS_SCHEMA = [
   { name: 'pick_date', type: 'DATE' },
+  // One batch per pipeline run (the nightly schedule or one you triggered).
+  { name: 'batch', type: 'STRING' },
+  { name: 'created_at', type: 'TIMESTAMP' },
   { name: 'job_id', type: 'INTEGER' },
   { name: 'rank', type: 'INTEGER' },
   { name: 'score', type: 'FLOAT' },

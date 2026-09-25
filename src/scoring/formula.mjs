@@ -385,7 +385,33 @@ function classifyPlace(segment, usTokens, excluded) {
   return { kind: 'unknown' };
 }
 
-export function gate({ title, jobLocation, extraction, negative = [], positive = [], allowed = [], excluded = [] }) {
+/**
+ * A posting that states a hard eligibility bar the candidate cannot clear: US
+ * citizenship, "U.S. person" status under ITAR/export control, or a security
+ * clearance (which itself requires citizenship). Phrased as requirements, not
+ * mentions — "we work with export-controlled data" alone does not match.
+ * Measured on the live pool: 9.9% of ungated postings (SpaceX, Palantir,
+ * Anduril…), and every job marked "US Citizen" in the tracking sheet.
+ */
+export const CITIZENSHIP_REQUIRED = new RegExp([
+  'must be a u\\.?\\s?s\\.?\\s?(citizen|person)',
+  'u\\.?\\s?s\\.?\\s?citizen(ship)?\\s+(is\\s+)?required',
+  'requires?\\s+u\\.?\\s?s\\.?\\s?citizenship',
+  'u\\.?\\s?s\\.?\\s?citizen and eligible',
+  '(obtain|maintain|hold|active)[^.]{0,40}(secret|ts/sci|top secret|security) clearance',
+  'itar requirements',
+  'require[s]? .{0,20}["\u201c\u201d]?u\\.?\\s?s\\.?\\s?person["\u201c\u201d]? status'
+].join('|'), 'i');
+
+export function requiresCitizenship(text) {
+  if (!text) return false;
+  // "U.S." -> "US" first: the clearance pattern stops at a sentence's period,
+  // and the dots inside "a U.S. Government security clearance" looked like one.
+  const plain = String(text).replace(/\s+/g, ' ').replace(/\bu\.\s?s\.(\s?a\.)?/gi, 'US');
+  return CITIZENSHIP_REQUIRED.test(plain);
+}
+
+export function gate({ title, jobLocation, extraction, negative = [], positive = [], allowed = [], excluded = [], text = null, excludeCitizenship = false }) {
   const t = (title || '').toLowerCase();
   // Same whole-word rule as the scan's title filter, so a title that passed the
   // scan ("Internal Tools") is not gated here for containing "Intern".
@@ -408,6 +434,9 @@ export function gate({ title, jobLocation, extraction, negative = [], positive =
   const anyUs = kinds.some((k) => k.kind === 'us');
   const foreign = kinds.find((k) => k.kind === 'foreign')?.token ?? titleForeign;
   if (foreign && !anyUs) return { gated: true, reason: `Location outside target (${foreign})` };
+  if (excludeCitizenship && requiresCitizenship(text)) {
+    return { gated: true, reason: 'Requires US citizenship or security clearance' };
+  }
   return { gated: false, reason: null };
 }
 

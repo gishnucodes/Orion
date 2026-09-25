@@ -33,6 +33,10 @@ const { config } = loadConfig();
 run('scan');
 run('extract');
 run('score');
+// Mirror your sheet statuses into the DB first (src/tracker.mjs), so this
+// run's export and the auto-applier see what you have applied to. Optional:
+// a Sheets outage must not stop the pipeline.
+run('tracker', true);
 // Today's top picks by score (src/pick.mjs) — the list the tracking sheet shows.
 run('pick');
 run('report');

@@ -10,7 +10,7 @@ import path from 'node:path';
 import { createLogger } from './logger.mjs';
 
 // Career-page hosts of boards read through an ATS API (see pooled's per-host cap).
-const API_BOARD_HOST = /(greenhouse\.io|ashbyhq\.com|lever\.co|getro\.com|jobs\.accel\.com|jobs\.generalcatalyst\.com|jobs\.khoslaventures\.com)$/;
+const API_BOARD_HOST = /(greenhouse\.io|ashbyhq\.com|lever\.co|smartrecruiters\.com|workable\.com|recruitee\.com|getro\.com|jobs\.accel\.com|jobs\.generalcatalyst\.com|jobs\.khoslaventures\.com)$/;
 
 function inferPlatform(url) {
   if (url.includes('greenhouse.io')) return 'greenhouse';
@@ -127,6 +127,18 @@ function smartRecruitersSlug(url) {
   return match ? match[1] : null;
 }
 
+/** Posting body; the list endpoint returns none. Company boilerplate is left out. */
+async function fetchSmartRecruitersDetail(slug, id) {
+  const res = await fetch(`https://api.smartrecruiters.com/v1/companies/${slug}/postings/${id}`);
+  if (!res.ok) return null;
+  const sections = (await res.json()).jobAd?.sections || {};
+  const text = ['jobDescription', 'qualifications', 'additionalInformation']
+    .map((k) => htmlToText(sections[k]?.text || ''))
+    .filter(Boolean)
+    .join('\n\n');
+  return text || null;
+}
+
 async function fetchSmartRecruitersJobs(careersUrl) {
   const slug = smartRecruitersSlug(careersUrl);
   if (!slug) return [];
@@ -140,12 +152,17 @@ async function fetchSmartRecruitersJobs(careersUrl) {
     const data = await res.json();
     const content = data.content || [];
     for (const job of content) {
-      const city = job.location?.city || null;
-      const country = job.location?.country || null;
-      const loc = [city, country].filter(Boolean).join(', ') || (job.location?.remote ? 'Remote' : null);
+      // fullLocation spells the country out ("Newark, NJ, United States"); the
+      // country field alone is a lowercase ISO-2 code ("de") the gate can't read.
+      const loc = job.location?.fullLocation
+        || [job.location?.city, job.location?.region, job.location?.country].filter(Boolean).join(', ')
+        || (job.location?.remote ? 'Remote' : null);
       jobs.push({
-        url: job.ref || (job.id ? `https://jobs.smartrecruiters.com/${slug}/${job.id}` : null),
+        // The public posting page. `job.ref` is the API URL (raw JSON), which
+        // is not something to put in front of you in the tracking sheet.
+        url: job.id ? `https://jobs.smartrecruiters.com/${slug}/${job.id}` : null,
         title: job.name,
+        describe: job.id ? () => fetchSmartRecruitersDetail(slug, job.id) : null,
         location: loc,
         source: 'smartrecruiters'
       });
@@ -493,8 +510,14 @@ async function main() {
   const locationFilterEnabled = config.scan?.filter_by_location !== false;
   const allowedPlaces = config.location?.allowed || [];
   const excludedPlaces = config.location?.excluded || [];
+  // Citizenship/clearance bar too, when the board API returned the posting
+  // body — the same rule score.mjs applies, just before the job costs anything.
+  const excludeCitizenship = config.eligibility?.exclude_citizenship_required === true;
   const foreignOnly = (job) => locationFilterEnabled
-    && gate({ title: job.title, jobLocation: job.location, extraction: null, allowed: allowedPlaces, excluded: excludedPlaces }).gated;
+    && gate({
+      title: job.title, jobLocation: job.location, extraction: null, allowed: allowedPlaces, excluded: excludedPlaces,
+      text: job.description, excludeCitizenship
+    }).gated;
   const apiPerHost = config.scan?.api_per_host_concurrency ?? 8;
   let newCount = 0;
   let seenCount = 0;

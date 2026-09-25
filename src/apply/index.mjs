@@ -131,6 +131,10 @@ function loadQueue(store) {
     const maxAge = applyCfg.max_age_days ?? 14;
     const cutoff = new Date(Date.now() - maxAge * 86400000).toISOString().slice(0, 10);
     const handled = handledJobIds(store, { retryFailed: args['retry-failed'] });
+    // Jobs you already dealt with by hand in the tracking sheet (mirrored into
+    // tracker_status by the nightly run). Older snapshots lack the table.
+    const hasTracker = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracker_status'").get();
+    if (hasTracker) for (const { job_id: id } of db.prepare('SELECT job_id FROM tracker_status').all()) handled.add(id);
     return db.prepare(`${base} WHERE s.matched = 1 AND j.last_seen >= ? ORDER BY s.score DESC, j.id ASC`).all(cutoff)
       .filter((j) => !handled.has(j.id))
       .slice(0, Number(args.limit) || 5);

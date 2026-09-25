@@ -35,16 +35,21 @@ export function loadConfig() {
   const cvPath = path.resolve(repoRoot, 'cv.md');
   const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
   const portals = yaml.load(fs.readFileSync(portalsPath, 'utf8'));
-  // Boards found by tools/import-slugs.mjs, kept out of the hand-curated file.
-  // Curated entries win: a discovered board already listed is dropped.
-  const discoveredPath = path.resolve(repoRoot, 'portals.discovered.yml');
-  if (fs.existsSync(discoveredPath)) {
-    const discovered = yaml.load(fs.readFileSync(discoveredPath, 'utf8'))?.tracked_companies || [];
-    const known = new Set((portals.tracked_companies || []).map((c) => (c.careers_url || '').replace(/\/+$/, '').toLowerCase()));
-    portals.tracked_companies = [
-      ...(portals.tracked_companies || []),
-      ...discovered.filter((c) => !known.has((c.careers_url || '').replace(/\/+$/, '').toLowerCase()))
-    ];
+  // Generated board lists, kept out of the hand-curated portals.yml:
+  // tools/import-slugs.mjs -> portals.discovered.yml (ATS boards) and
+  // tools/find-getro-networks.mjs -> portals.getro.yml (VC networks). An entry
+  // already listed earlier wins, so curated boards are never overridden.
+  const known = new Set((portals.tracked_companies || []).map((c) => (c.careers_url || '').replace(/\/+$/, '').toLowerCase()));
+  for (const file of ['portals.discovered.yml', 'portals.getro.yml']) {
+    const generatedPath = path.resolve(repoRoot, file);
+    if (!fs.existsSync(generatedPath)) continue;
+    const entries = yaml.load(fs.readFileSync(generatedPath, 'utf8'))?.tracked_companies || [];
+    for (const c of entries) {
+      const key = (c.careers_url || '').replace(/\/+$/, '').toLowerCase();
+      if (known.has(key)) continue;
+      known.add(key);
+      (portals.tracked_companies ||= []).push(c);
+    }
   }
   const cv = fs.readFileSync(cvPath, 'utf8');
 

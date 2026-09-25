@@ -1,0 +1,74 @@
+# Getro VC-network boards found by tools/find-getro-networks.mjs — do not edit by
+# hand; re-run the tool. Generated 2026-09-25. Each produced >= 3 US,
+# title-relevant postings/day when measured. Merged after portals.yml by src/config.mjs.
+tracked_companies:
+  - name: Thrive Capital
+    careers_url: https://jobs.thrivecap.com/jobs
+    platform: getro
+    network_id: 2105
+    enabled: true
+  - name: Lux Capital
+    careers_url: https://jobs.luxcapital.com/jobs
+    platform: getro
+    network_id: 103
+    enabled: true
+  - name: 8VC
+    careers_url: https://jobs.8vc.com/jobs
+    platform: getro
+    network_id: 1005
+    enabled: true
+  - name: XYZ Venture Capital
+    careers_url: https://jobs.xyz.vc/jobs
+    platform: getro
+    network_id: 13359
+    enabled: true
+  - name: Menlo Ventures
+    careers_url: https://jobs.menlovc.com/jobs
+    platform: getro
+    network_id: 767
+    enabled: true
+  - name: Insight Partners
+    careers_url: https://jobs.insightpartners.com/jobs
+    platform: getro
+    network_id: 246
+    enabled: true
+  - name: Uncork Capital
+    careers_url: https://jobs.uncorkcapital.com/jobs
+    platform: getro
+    network_id: 247
+    enabled: true
+  - name: Redpoint Ventures
+    careers_url: https://careers.redpoint.com/jobs
+    platform: getro
+    network_id: 189
+    enabled: true
+  - name: Emergence Capital
+    careers_url: https://talent.emcap.com/jobs
+    platform: getro
+    network_id: 164
+    enabled: true
+  - name: DCVC
+    careers_url: https://jobs.dcvc.com/jobs
+    platform: getro
+    network_id: 514
+    enabled: true
+  - name: Notable Capital
+    careers_url: https://jobs.notablecap.com/jobs
+    platform: getro
+    network_id: 764
+    enabled: true
+  - name: Lerer Hippeau
+    careers_url: https://jobs.lererhippeau.com/jobs
+    platform: getro
+    network_id: 120
+    enabled: true
+  - name: Basis Set
+    careers_url: https://jobs.basisset.com/jobs
+    platform: getro
+    network_id: 619
+    enabled: true
+  - name: SV Angel
+    careers_url: https://jobs.svangel.com/jobs
+    platform: getro
+    network_id: 880
+    enabled: true

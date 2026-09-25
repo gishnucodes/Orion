@@ -91,6 +91,29 @@ export function openDb(dbPath) {
     );
     CREATE INDEX IF NOT EXISTS daily_picks_job ON daily_picks(job_id);
   `);
+  // A batch per run (src/pick.mjs), so an on-demand run adds a fresh set
+  // instead of finding today's already taken. Rows from before this are one
+  // batch per day.
+  const pickColumns = db.prepare('PRAGMA table_info(daily_picks)').all().map((c) => c.name);
+  if (!pickColumns.includes('batch')) db.exec('ALTER TABLE daily_picks ADD COLUMN batch TEXT');
+  if (!pickColumns.includes('created_at')) db.exec('ALTER TABLE daily_picks ADD COLUMN created_at TEXT');
+  db.exec("UPDATE daily_picks SET batch = 'daily-' || pick_date WHERE batch IS NULL");
+  db.exec("UPDATE daily_picks SET created_at = pick_date || 'T22:00:00Z' WHERE created_at IS NULL");
+  // Your marks from the tracking sheet (src/tracker.mjs): one row per job you
+  // gave a status. The sheet is the source of truth; this is its mirror, so
+  // the pipeline and the auto-applier can see what you have applied to.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tracker_status (
+      job_id INTEGER PRIMARY KEY,
+      status TEXT NOT NULL,
+      raw_status TEXT,
+      notes TEXT,
+      pick_date TEXT,
+      first_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(job_id) REFERENCES jobs(id)
+    );
+  `);
   return db;
 }
 
